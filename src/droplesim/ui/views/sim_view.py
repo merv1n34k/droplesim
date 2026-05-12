@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from droplesim.gui.theme import Theme, button_qss, configure_monospace_font, text_qss
+from droplesim.ui.theme import Theme, button_qss, configure_monospace_font, text_qss
 
 
 def _build_lut(cmap: pg.ColorMap) -> np.ndarray:

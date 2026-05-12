@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from droplesim.gui.panels.phase_panel import PhasePanel
+from droplesim.ui.panels.phase_panel import PhasePanel
 
 log = logging.getLogger(__name__)
 

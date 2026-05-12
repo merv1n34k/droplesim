@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from droplesim.gui.theme import text_qss
+from droplesim.ui.theme import text_qss
 
 
 class EdgeDialog(QDialog):

@@ -9,8 +9,8 @@ import pyqtgraph as pg
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QHBoxLayout, QWidget
 
-from droplesim.gui.dialogs.edge_dialog import EdgeDialog
-from droplesim.gui.panels.edge_panel import EdgePanel
+from droplesim.ui.dialogs.edge_dialog import EdgeDialog
+from droplesim.ui.panels.edge_panel import EdgePanel
 
 log = logging.getLogger(__name__)
 

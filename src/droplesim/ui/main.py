@@ -21,14 +21,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from droplesim.gui.panels.params_panel import ParamsPanel
-from droplesim.gui.state import SessionState
-from droplesim.gui.theme import GLOBAL_QSS, configure_pyqtgraph
-from droplesim.gui.views.edge_view import EdgeView
-from droplesim.gui.views.geometry_view import GeometryView
-from droplesim.gui.views.phase_view import PhaseView
-from droplesim.gui.views.sim_view import SimView
-from droplesim.gui.workers.sim_worker import SimWorker
+from droplesim.ui.panels.params_panel import ParamsPanel
+from droplesim.ui.state import SessionState
+from droplesim.ui.theme import GLOBAL_QSS, configure_pyqtgraph
+from droplesim.ui.views.edge_view import EdgeView
+from droplesim.ui.views.geometry_view import GeometryView
+from droplesim.ui.views.phase_view import PhaseView
+from droplesim.ui.views.sim_view import SimView
+from droplesim.ui.workers.sim_worker import SimWorker
 from droplesim.solver.geometry2d import (
     EdgeSpec,
     assign_edge_bcs,
@@ -161,7 +161,7 @@ class MainWindow(QMainWindow):
         self._update_stage_styles()
 
     def _update_stage_styles(self):
-        from droplesim.gui.theme import Theme
+        from droplesim.ui.theme import Theme
         for i, btn in enumerate(self._stage_btns):
             if btn.isChecked():
                 btn.setStyleSheet(

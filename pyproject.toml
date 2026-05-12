@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.scripts]
-droplesim = "droplesim.gui.main:main"
+droplesim = "droplesim.ui.main:main"
 
 [build-system]
 requires = ["hatchling"]
