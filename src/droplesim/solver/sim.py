@@ -5,7 +5,7 @@ Sparse / indirect-addressing: stores and computes ONLY fluid cells.
 Physics
 -------
 f_i  — 9 distribution functions for Navier-Stokes (BGK + Guo forcing)
-φ    — phase-field order parameter: 1 = oil, 0 = aqueous
+φ    — phase-field order parameter: 1 = continuous, 0 = disperse
 τ(φ) — spatially varying relaxation time (linear interpolation)
 F_s  — surface-tension body force = μ ∇φ  (chemical-potential model)
 
@@ -14,9 +14,9 @@ with a double-well reaction term.
 
 Unit conversion
 ---------------
-Anchor: τ_oil = 0.55  →  ν_oil_LU = (τ_oil - 0.5) / 3
-dx_phys given (e.g. 2.5 µm).  dt derived so that ν_oil matches.
-All other LBM parameters (τ_aq, u_inlet, σ) follow from dt/dx.
+Anchor: τ_c = 0.55  →  ν_c_LU = (τ_c - 0.5) / 3
+dx_phys given (e.g. 2.5 µm).  dt derived so that ν_c matches.
+All other LBM parameters (τ_d, u_inlet, σ) follow from dt/dx.
 
 Sparse addressing
 -----------------
@@ -56,19 +56,21 @@ _Q = 9
 
 @dataclass
 class PhysParams:
-    mu_oil: float       # dynamic viscosity, Pa·s
-    mu_aq: float        # dynamic viscosity, Pa·s
-    rho: float          # density (both phases assumed equal), kg/m³
+    mu_c: float         # continuous phase dynamic viscosity, Pa·s
+    mu_d: float         # disperse phase dynamic viscosity, Pa·s
+    rho_c: float        # continuous phase density, kg/m³
+    rho_d: float        # disperse phase density, kg/m³
     sigma: float        # interfacial tension, N/m
     contact_angle_deg: float = 150.0
 
 
 @dataclass
 class LBMUnits:
-    tau_oil: float
-    tau_aq: float
+    tau_c: float
+    tau_d: float
     dx: float           # physical length per node [m]
     dt: float           # physical time per step [s]
+    rho_ratio: float    # rho_d / rho_c in LBM (density contrast)
     sigma_lbm: float
     kappa: float        # gradient energy coefficient
     beta: float         # bulk free-energy coefficient
@@ -79,18 +81,20 @@ class LBMUnits:
 def convert_units(
     phys: PhysParams,
     dx_um: float,
-    tau_oil: float = 0.55,
+    tau_c: float = 0.55,
     interface_width: int = 4,
     mobility: float = 0.1,
 ) -> LBMUnits:
     dx = dx_um * 1e-6  # m
-    nu_oil = phys.mu_oil / phys.rho      # kinematic viscosity [m²/s]
-    nu_oil_lu = (tau_oil - 0.5) / 3.0
-    dt = nu_oil_lu * dx**2 / nu_oil      # time step [s]
+    nu_c = phys.mu_c / phys.rho_c        # kinematic viscosity [m²/s]
+    nu_c_lu = (tau_c - 0.5) / 3.0
+    dt = nu_c_lu * dx**2 / nu_c          # time step [s]
 
-    nu_aq = phys.mu_aq / phys.rho
-    nu_aq_lu = nu_aq * dt / dx**2
-    tau_aq = 3.0 * nu_aq_lu + 0.5
+    nu_d = phys.mu_d / phys.rho_d
+    nu_d_lu = nu_d * dt / dx**2
+    tau_d = 3.0 * nu_d_lu + 0.5
+
+    rho_ratio = phys.rho_d / phys.rho_c
 
     # Allen-Cahn interface parameters
     # Free energy: F(φ) = β·φ²·(1-φ)²
@@ -100,15 +104,16 @@ def convert_units(
     # Solving:   κ = 3σW/2,    β = 12σ/W
 
     W_lu = float(interface_width)
-    sigma_lbm = phys.sigma * dt**2 / (phys.rho * dx**3)
+    sigma_lbm = phys.sigma * dt**2 / (phys.rho_c * dx**3)
     kappa_lu = 1.5 * sigma_lbm * W_lu       # 3σW/2
     beta_lu = 12.0 * sigma_lbm / W_lu       # 12σ/W
 
     return LBMUnits(
-        tau_oil=tau_oil,
-        tau_aq=tau_aq,
+        tau_c=tau_c,
+        tau_d=tau_d,
         dx=dx,
         dt=dt,
+        rho_ratio=rho_ratio,
         sigma_lbm=sigma_lbm,
         kappa=kappa_lu,
         beta=beta_lu,
@@ -281,13 +286,13 @@ class TwoPhaseSim:
         self,
         geometry: Geometry2D,
         phys: PhysParams,
-        tau_oil: float = 0.55,
+        tau_c: float = 0.55,
         interface_width: int = 4,
         mobility: float = 0.1,
     ):
         self.geom = geometry
         self.phys = phys
-        self.units = convert_units(phys, geometry.dx_um, tau_oil, interface_width, mobility)
+        self.units = convert_units(phys, geometry.dx_um, tau_c, interface_width, mobility)
 
         sp = geometry.sparse
         assert sp is not None, "Geometry2D must have sparse index maps (call build_sparse_maps)"
@@ -335,8 +340,8 @@ class TwoPhaseSim:
         self._jit_step = jax.jit(self._step)
 
     def _tau_field(self, phi):
-        """Linear interpolation of relaxation time: τ(φ) = τ_oil·φ + τ_aq·(1-φ)."""
-        return self.units.tau_oil * phi + self.units.tau_aq * (1.0 - phi)
+        """Linear interpolation of relaxation time: τ(φ) = τ_c·φ + τ_d·(1-φ)."""
+        return self.units.tau_c * phi + self.units.tau_d * (1.0 - phi)
 
     def _init_state(self):
         """Initialize f = equilibrium(rho=1, u=0) and φ = 1 (oil everywhere)."""

@@ -117,7 +117,7 @@ class ParamsPanel(QWidget):
         adv_lay = QVBoxLayout(self._advanced)
         adv_lay.setSpacing(4)
 
-        self._tau_oil = self._add_spin(adv_lay, "tau_oil:", 0.51, 2.0, 0.55, 0.01, decimals=3)
+        self._tau_c = self._add_spin(adv_lay, "tau_c:", 0.51, 2.0, 0.55, 0.01, decimals=3)
 
         self._iw = QSpinBox()
         self._iw.setRange(2, 8)
@@ -219,7 +219,7 @@ class ParamsPanel(QWidget):
 
     def simulation_dict(self) -> dict:
         return {
-            "tau_oil": self._tau_oil.value(),
+            "tau_c": self._tau_c.value(),
             "interface_width": self._iw.value(),
             "mobility": self._mobility.value(),
             "emit_interval": self._emit_interval.value(),
@@ -247,7 +247,7 @@ class ParamsPanel(QWidget):
         self._sigma.setValue(intf.get("sigma_mNm", 3.5))
         self._contact_angle.setValue(intf.get("contact_angle_deg", 150.0))
         s = state.simulation
-        self._tau_oil.setValue(s.get("tau_oil", 0.55))
+        self._tau_c.setValue(s.get("tau_c", 0.55))
         self._iw.setValue(s.get("interface_width", 4))
         self._mobility.setValue(s.get("mobility", 0.1))
         self._emit_interval.setValue(s.get("emit_interval", 50))

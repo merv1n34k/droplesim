@@ -311,15 +311,16 @@ class MainWindow(QMainWindow):
                 geom = self._build_geometry()
                 p = self._params.physics_dict()
                 phys = PhysParams(
-                    mu_oil=p["continuous"]["mu_mPas"] * 1e-3,
-                    mu_aq=p["disperse"]["mu_mPas"] * 1e-3,
-                    rho=p["continuous"]["rho_kg_m3"],
+                    mu_c=p["continuous"]["mu_mPas"] * 1e-3,
+                    mu_d=p["disperse"]["mu_mPas"] * 1e-3,
+                    rho_c=p["continuous"]["rho_kg_m3"],
+                    rho_d=p["disperse"]["rho_kg_m3"],
                     sigma=p["interface"]["sigma_mNm"] * 1e-3,
                     contact_angle_deg=p["interface"]["contact_angle_deg"],
                 )
                 sim = TwoPhaseSim(
                     geom, phys,
-                    tau_oil=s["tau_oil"],
+                    tau_c=s["tau_c"],
                     interface_width=s["interface_width"],
                     mobility=s["mobility"],
                 )
@@ -327,8 +328,8 @@ class MainWindow(QMainWindow):
                 phi_init = self._phase_view.build_phi_init()
 
                 log.info(
-                    "Starting simulation: tau_oil=%.3f, tau_aq=%.3f, W=%d, M=%.3f, emit=%d",
-                    sim.units.tau_oil, sim.units.tau_aq,
+                    "Starting simulation: tau_c=%.3f, tau_d=%.3f, W=%d, M=%.3f, emit=%d",
+                    sim.units.tau_c, sim.units.tau_d,
                     s["interface_width"], s["mobility"], s["emit_interval"],
                 )
                 log.info("  dt=%.3e s, dx=%.3e m, sigma_lbm=%.3e, kappa=%.3e, beta=%.3e",

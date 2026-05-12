@@ -36,6 +36,14 @@ def _migrate_physics(physics: dict) -> dict:
     return physics
 
 
+def _migrate_simulation(simulation: dict) -> dict:
+    """Migrate old tau_oil key to tau_c."""
+    if "tau_oil" in simulation and "tau_c" not in simulation:
+        simulation = dict(simulation)
+        simulation["tau_c"] = simulation.pop("tau_oil")
+    return simulation
+
+
 @dataclass
 class SessionState:
     dxf_path: str = ""
@@ -44,7 +52,7 @@ class SessionState:
     phase_regions: list[dict] = field(default_factory=list)
     physics: dict = field(default_factory=_default_physics)
     simulation: dict = field(default_factory=lambda: {
-        "tau_oil": 0.55,
+        "tau_c": 0.55,
         "interface_width": 4,
         "mobility": 0.1,
         "emit_interval": 50,
@@ -82,7 +90,7 @@ class SessionState:
             edges=data.get("edges", []),
             phase_regions=data.get("phase_regions", []),
             physics=physics,
-            simulation=data.get("simulation", {}),
+            simulation=_migrate_simulation(data.get("simulation", {})),
             timestamp=data.get("timestamp", ""),
         )
 
