@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import logging
 
+import dropletui as ui
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QRectF, Signal
 from PySide6.QtWidgets import (
-    QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFormLayout,
-    QHBoxLayout,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -34,16 +33,17 @@ class PhiDialog(QDialog):
         self.setMinimumWidth(250)
         layout = QFormLayout(self)
 
-        self._preset = QComboBox()
-        self._preset.addItems(["Oil (phi=1)", "Aqueous (phi=0)"])
+        self._preset = ui.combo_box(["Oil (phi=1)", "Aqueous (phi=0)"])
         self._preset.currentIndexChanged.connect(self._on_preset)
         layout.addRow("Phase:", self._preset)
 
-        self._phi = QDoubleSpinBox()
-        self._phi.setRange(0.0, 1.0)
-        self._phi.setSingleStep(0.1)
-        self._phi.setDecimals(2)
-        self._phi.setValue(1.0)
+        self._phi = ui.double_box(
+            minimum=0.0,
+            maximum=1.0,
+            value=1.0,
+            step=0.1,
+            decimals=2,
+        )
         layout.addRow("Phi:", self._phi)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -120,24 +120,30 @@ class PhaseView(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        layout = QHBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
+        layout.setSpacing(0)
 
         self._vb = DragViewBox()
         self._vb.rect_drawn.connect(self._on_rect_drawn)
         self._plot = pg.PlotWidget(
             viewBox=self._vb, title="Phase Regions  (drag rectangle to paint)"
         )
-        self._plot.setBackground("#1a1a1a")
+        self._plot.setBackground(ui.Theme.BG_DARK)
         self._plot.setAspectLocked(True)
         self._plot.setLabel("bottom", "x [µm]")
         self._plot.setLabel("left", "y [µm]")
-        layout.addWidget(self._plot, stretch=3)
 
         self._panel = PhasePanel()
         self._panel.delete_requested.connect(self._on_delete_region)
-        layout.addWidget(self._panel, stretch=1)
+        layout.addWidget(
+            ui.split_view(
+                self._plot,
+                self._panel,
+                side_position="right",
+                sizes=(1000, 320),
+            )
+        )
 
         self._wall_curves: list[pg.PlotDataItem] = []
         self._fill_items: list[pg.ImageItem] = []

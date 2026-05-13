@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
+import dropletui as ui
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QDoubleSpinBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
-    QPushButton,
     QScrollArea,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -26,7 +23,6 @@ class ParamsPanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(300)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -34,20 +30,23 @@ class ParamsPanel(QWidget):
 
         inner = QWidget()
         layout = QVBoxLayout(inner)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(
+            ui.Theme.PANEL_PADDING,
+            ui.Theme.PANEL_PADDING,
+            ui.Theme.PANEL_PADDING,
+            ui.Theme.PANEL_PADDING,
+        )
+        layout.setSpacing(ui.Theme.SPACE_2)
 
         # ── Geometry ──
         geo_group = QGroupBox("Geometry")
         geo_lay = QVBoxLayout(geo_group)
-        geo_lay.setSpacing(4)
+        geo_lay.setSpacing(ui.Theme.SPACE_2)
 
         path_row = QHBoxLayout()
-        self._dxf_path = QLineEdit()
-        self._dxf_path.setPlaceholderText("DXF file path...")
+        self._dxf_path = ui.line_edit(placeholder="DXF file path...")
         path_row.addWidget(self._dxf_path)
-        browse_btn = QPushButton("...")
-        browse_btn.setFixedWidth(32)
+        browse_btn = ui.button("...", size="inline")
         browse_btn.clicked.connect(self._browse_dxf)
         path_row.addWidget(browse_btn)
         geo_lay.addLayout(path_row)
@@ -59,7 +58,7 @@ class ParamsPanel(QWidget):
         )
         self._channel_depth.valueChanged.connect(self.channel_depth_changed.emit)
 
-        self._load_btn = QPushButton("Load")
+        self._load_btn = ui.button("Load", variant="primary")
         self._load_btn.clicked.connect(self._on_load)
         geo_lay.addWidget(self._load_btn)
 
@@ -68,7 +67,7 @@ class ParamsPanel(QWidget):
         # ── Continuous Phase (oil, phi=1) ──
         cont_group = QGroupBox("Continuous Phase (oil)")
         cont_lay = QVBoxLayout(cont_group)
-        cont_lay.setSpacing(4)
+        cont_lay.setSpacing(ui.Theme.SPACE_2)
 
         self._mu_cont = self._add_spin(cont_lay, "µ [mPa·s]:", 0.1, 500.0, 1.24, 0.1)
         self._rho_cont = self._add_spin(cont_lay, "ρ [kg/m³]:", 500.0, 2000.0, 1050.0, 10.0)
@@ -78,7 +77,7 @@ class ParamsPanel(QWidget):
         # ── Disperse Phase (aqueous, phi=0) ──
         disp_group = QGroupBox("Disperse Phase (aqueous)")
         disp_lay = QVBoxLayout(disp_group)
-        disp_lay.setSpacing(4)
+        disp_lay.setSpacing(ui.Theme.SPACE_2)
 
         self._mu_disp = self._add_spin(disp_lay, "µ [mPa·s]:", 0.1, 500.0, 1.75, 0.1)
         self._rho_disp = self._add_spin(disp_lay, "ρ [kg/m³]:", 500.0, 2000.0, 1000.0, 10.0)
@@ -88,7 +87,7 @@ class ParamsPanel(QWidget):
         # ── Interface ──
         intf_group = QGroupBox("Interface")
         intf_lay = QVBoxLayout(intf_group)
-        intf_lay.setSpacing(4)
+        intf_lay.setSpacing(ui.Theme.SPACE_2)
 
         self._sigma = self._add_spin(intf_lay, "σ [mN/m]:", 0.1, 100.0, 3.5, 0.5)
         self._contact_angle = self._add_spin(
@@ -100,11 +99,9 @@ class ParamsPanel(QWidget):
         # ── Simulation ──
         sim_group = QGroupBox("Simulation")
         sim_lay = QVBoxLayout(sim_group)
-        sim_lay.setSpacing(4)
+        sim_lay.setSpacing(ui.Theme.SPACE_2)
 
-        self._emit_interval = QSpinBox()
-        self._emit_interval.setRange(1, 1000)
-        self._emit_interval.setValue(50)
+        self._emit_interval = ui.int_box(minimum=1, maximum=1000, value=50)
         ei_row = QHBoxLayout()
         ei_row.addWidget(QLabel("Emit interval:"))
         ei_row.addWidget(self._emit_interval)
@@ -115,13 +112,11 @@ class ParamsPanel(QWidget):
         self._advanced.setCheckable(True)
         self._advanced.setChecked(False)
         adv_lay = QVBoxLayout(self._advanced)
-        adv_lay.setSpacing(4)
+        adv_lay.setSpacing(ui.Theme.SPACE_2)
 
         self._tau_c = self._add_spin(adv_lay, "tau_c:", 0.51, 2.0, 0.55, 0.01, decimals=3)
 
-        self._iw = QSpinBox()
-        self._iw.setRange(2, 8)
-        self._iw.setValue(4)
+        self._iw = ui.int_box(minimum=2, maximum=8, value=4)
         iw_row = QHBoxLayout()
         iw_row.addWidget(QLabel("Interface W:"))
         iw_row.addWidget(self._iw)
@@ -140,13 +135,13 @@ class ParamsPanel(QWidget):
         # ── Config ──
         cfg_group = QGroupBox("Config")
         cfg_lay = QVBoxLayout(cfg_group)
-        cfg_lay.setSpacing(4)
+        cfg_lay.setSpacing(ui.Theme.SPACE_2)
 
-        save_btn = QPushButton("Save Config")
+        save_btn = ui.button("Save Config")
         save_btn.clicked.connect(self.save_config_requested.emit)
         cfg_lay.addWidget(save_btn)
 
-        load_btn = QPushButton("Load Config")
+        load_btn = ui.button("Load Config")
         load_btn.clicked.connect(self._on_load_config)
         cfg_lay.addWidget(load_btn)
 
@@ -164,16 +159,18 @@ class ParamsPanel(QWidget):
 
     def _add_spin(
         self, parent_layout, label, lo, hi, default, step, decimals=2
-    ) -> QDoubleSpinBox:
+    ):
         row = QHBoxLayout()
         lbl = QLabel(label)
         lbl.setMinimumWidth(110)
         row.addWidget(lbl)
-        spin = QDoubleSpinBox()
-        spin.setRange(lo, hi)
-        spin.setValue(default)
-        spin.setSingleStep(step)
-        spin.setDecimals(decimals)
+        spin = ui.double_box(
+            minimum=lo,
+            maximum=hi,
+            value=default,
+            step=step,
+            decimals=decimals,
+        )
         row.addWidget(spin)
         parent_layout.addLayout(row)
         return spin

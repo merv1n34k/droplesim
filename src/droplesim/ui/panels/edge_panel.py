@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dropletui as ui
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -9,7 +10,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -28,8 +28,13 @@ class EdgePanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(
+            ui.Theme.PANEL_PADDING,
+            ui.Theme.PANEL_PADDING,
+            ui.Theme.PANEL_PADDING,
+            ui.Theme.PANEL_PADDING,
+        )
+        layout.setSpacing(ui.Theme.SPACE_2)
 
         layout.addWidget(QLabel("Edges"))
         self._list = QListWidget()
@@ -37,10 +42,10 @@ class EdgePanel(QWidget):
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(4)
-        edit_btn = QPushButton("Edit")
+        edit_btn = ui.button("Edit")
         edit_btn.clicked.connect(self._on_edit)
         btn_row.addWidget(edit_btn)
-        del_btn = QPushButton("Reset")
+        del_btn = ui.button("Reset", variant="danger")
         del_btn.clicked.connect(self._on_delete)
         btn_row.addWidget(del_btn)
         layout.addLayout(btn_row)

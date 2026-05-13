@@ -2,7 +2,7 @@
 name = "droplesim"
 version = "0.1.0"
 description = "XLB-based LBM parametric study of Drop-seq microfluidics"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     # LBM framework (JAX-backed, 2D + 3D, GPU-native)
     "xlb>=0.3",
@@ -21,6 +21,7 @@ dependencies = [
     "pyqtgraph>=0.13",
     # Dev tools
     "ruff>=0.4",
+    "dropletui>=0.1.1",
 ]
 
 [project.scripts]

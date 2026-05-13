@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import dropletui as ui
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -20,14 +20,19 @@ class PhasePanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(
+            ui.Theme.PANEL_PADDING,
+            ui.Theme.PANEL_PADDING,
+            ui.Theme.PANEL_PADDING,
+            ui.Theme.PANEL_PADDING,
+        )
+        layout.setSpacing(ui.Theme.SPACE_2)
 
         layout.addWidget(QLabel("Phase Regions"))
         self._list = QListWidget()
         layout.addWidget(self._list)
 
-        del_btn = QPushButton("Delete")
+        del_btn = ui.button("Delete", variant="danger")
         del_btn.clicked.connect(self._on_delete)
         layout.addWidget(del_btn)
 

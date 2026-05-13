@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
+import dropletui as ui
 import numpy as np
 import pyqtgraph as pg
+from dropletui.theme import text_qss
 from PySide6.QtCore import QRectF, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
-    QLabel,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
-
-from droplesim.ui.theme import Theme, button_qss, configure_monospace_font, text_qss
 
 
 def _build_lut(cmap: pg.ColorMap) -> np.ndarray:
@@ -39,20 +37,17 @@ class SimView(QWidget):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
 
-        self._start_btn = QPushButton("Start")
-        self._start_btn.setStyleSheet(button_qss("success"))
+        self._start_btn = ui.button("Start", variant="success")
         self._start_btn.clicked.connect(self.start_requested.emit)
         btn_row.addWidget(self._start_btn)
 
-        self._stop_btn = QPushButton("Stop")
+        self._stop_btn = ui.button("Stop", variant="danger")
         self._stop_btn.setEnabled(False)
-        self._stop_btn.setStyleSheet(button_qss("danger"))
         self._stop_btn.clicked.connect(self.stop_requested.emit)
         btn_row.addWidget(self._stop_btn)
 
-        self._reset_btn = QPushButton("Reset")
+        self._reset_btn = ui.button("Reset", variant="primary")
         self._reset_btn.setEnabled(False)
-        self._reset_btn.setStyleSheet(button_qss("primary"))
         self._reset_btn.clicked.connect(self.reset_requested.emit)
         btn_row.addWidget(self._reset_btn)
 
@@ -82,7 +77,7 @@ class SimView(QWidget):
 
         # Phase field plot
         self._phi_plot = pg.PlotWidget(title="Phase Field (phi)")
-        self._phi_plot.setBackground(Theme.BG_DARK)
+        self._phi_plot.setBackground(ui.Theme.BG_DARK)
         self._phi_plot.setAspectLocked(True)
         self._phi_plot.setLabel("bottom", "x [µm]")
         self._phi_plot.setLabel("left", "y [µm]")
@@ -92,7 +87,7 @@ class SimView(QWidget):
 
         # Velocity magnitude plot
         self._vel_plot = pg.PlotWidget(title="Velocity |u|")
-        self._vel_plot.setBackground(Theme.BG_DARK)
+        self._vel_plot.setBackground(ui.Theme.BG_DARK)
         self._vel_plot.setAspectLocked(True)
         self._vel_plot.setLabel("bottom", "x [µm]")
         self._vel_plot.setLabel("left", "y [µm]")
@@ -102,7 +97,7 @@ class SimView(QWidget):
 
         # Pressure (rho) plot
         self._prs_plot = pg.PlotWidget(title="Pressure (rho)")
-        self._prs_plot.setBackground(Theme.BG_DARK)
+        self._prs_plot.setBackground(ui.Theme.BG_DARK)
         self._prs_plot.setAspectLocked(True)
         self._prs_plot.setLabel("bottom", "x [µm]")
         self._prs_plot.setLabel("left", "y [µm]")
@@ -114,9 +109,9 @@ class SimView(QWidget):
         layout.addLayout(self._img_row, stretch=1)
 
         # Status line
-        self._status = QLabel("Ready")
+        self._status = ui.status_label("Ready", kind="muted", small=True)
         mono = QFont()
-        configure_monospace_font(mono, 11)
+        ui.configure_monospace_font(mono, 11)
         self._status.setFont(mono)
         self._status.setStyleSheet(text_qss("muted", padding="4px"))
         layout.addWidget(self._status)

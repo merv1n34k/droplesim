@@ -6,29 +6,19 @@ import logging
 import signal
 import sys
 
+import dropletui as ui
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
-    QApplication,
     QHBoxLayout,
     QMainWindow,
     QMessageBox,
-    QPushButton,
-    QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from droplesim.ui.panels.params_panel import ParamsPanel
-from droplesim.ui.state import SessionState
-from droplesim.ui.theme import GLOBAL_QSS, configure_pyqtgraph
-from droplesim.ui.views.edge_view import EdgeView
-from droplesim.ui.views.geometry_view import GeometryView
-from droplesim.ui.views.phase_view import PhaseView
-from droplesim.ui.views.sim_view import SimView
-from droplesim.ui.workers.sim_worker import SimWorker
 from droplesim.solver.geometry2d import (
     EdgeSpec,
     assign_edge_bcs,
@@ -38,6 +28,13 @@ from droplesim.solver.geometry2d import (
     rasterize_polygons,
 )
 from droplesim.solver.sim import PhysParams, TwoPhaseSim
+from droplesim.ui.panels.params_panel import ParamsPanel
+from droplesim.ui.state import SessionState
+from droplesim.ui.views.edge_view import EdgeView
+from droplesim.ui.views.geometry_view import GeometryView
+from droplesim.ui.views.phase_view import PhaseView
+from droplesim.ui.views.sim_view import SimView
+from droplesim.ui.workers.sim_worker import SimWorker
 
 log = logging.getLogger(__name__)
 
@@ -67,36 +64,30 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # -- Body: horizontal splitter (params | right panel) --
-        body = QSplitter()
-
         self._params = ParamsPanel()
         self._params.load_geometry_requested.connect(self._on_load_geometry)
         self._params.channel_depth_changed.connect(self._on_channel_depth_changed)
         self._params.save_config_requested.connect(self._on_save_config)
         self._params.load_config_requested.connect(self._on_load_config)
-        body.addWidget(self._params)
 
         # Right panel: stage buttons + stacked views
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(0)
+        right_layout.setSpacing(ui.Theme.SPACE_2)
 
         from PySide6.QtWidgets import QSizePolicy
 
         stage_bar = QWidget()
-        stage_bar.setFixedHeight(150)
         stage_row = QHBoxLayout(stage_bar)
         stage_row.setContentsMargins(0, 0, 0, 0)
         stage_row.setSpacing(1)
 
-        self._stage_btns: list[QPushButton] = []
+        self._stage_btns = []
         stage_labels = ["1. Geometry", "2. Edges", "3. Phase", "4. Simulate"]
         for i, label in enumerate(stage_labels):
-            btn = QPushButton(label)
+            btn = ui.stage_button(label)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            btn.setCheckable(True)
             btn.clicked.connect(lambda checked, idx=i: self._on_stage_clicked(idx))
             stage_row.addWidget(btn, 1)
             self._stage_btns.append(btn)
@@ -106,10 +97,14 @@ class MainWindow(QMainWindow):
         self._stack = QStackedWidget()
         right_layout.addWidget(self._stack, stretch=1)
 
-        body.addWidget(right)
-
-        body.setStretchFactor(0, 0)
-        body.setStretchFactor(1, 1)
+        # -- Body: shared horizontal splitter (params | right panel) --
+        body = ui.horizontal_splitter(
+            self._params,
+            right,
+            sizes=(320, 1080),
+            stretch=(0, 1),
+            collapsible=(False, False),
+        )
 
         # Views
         self._geometry_view = GeometryView()
@@ -149,7 +144,7 @@ class MainWindow(QMainWindow):
         log.info("MainWindow initialized")
 
     def _set_status(self, msg: str, color: str = "#888888"):
-        self._status_bar.setStyleSheet(f"color: {color};")
+        _ = color
         self._status_bar.showMessage(msg)
 
     def _on_stage_clicked(self, idx: int):
@@ -161,27 +156,12 @@ class MainWindow(QMainWindow):
         self._update_stage_styles()
 
     def _update_stage_styles(self):
-        from droplesim.ui.theme import Theme
-        for i, btn in enumerate(self._stage_btns):
-            if btn.isChecked():
-                btn.setStyleSheet(
-                    f"QPushButton {{ background-color: {Theme.ACCENT}; color: {Theme.TEXT_WHITE};"
-                    f" border: none; border-radius: 0; padding: 8px 10px;"
-                    f" font-weight: bold; font-size: {Theme.FONT_SIZE_BODY}px; }}"
-                )
-            elif not btn.isEnabled():
-                btn.setStyleSheet(
-                    f"QPushButton {{ background-color: {Theme.BG_MEDIUM}; color: {Theme.TEXT_DISABLED};"
-                    f" border: none; border-radius: 0; padding: 8px 10px;"
-                    f" font-size: {Theme.FONT_SIZE_BODY}px; }}"
-                )
-            else:
-                btn.setStyleSheet(
-                    f"QPushButton {{ background-color: {Theme.BG_CONTROL}; color: {Theme.TEXT_WHITE};"
-                    f" border: none; border-radius: 0; padding: 8px 10px;"
-                    f" font-size: {Theme.FONT_SIZE_BODY}px; }}"
-                    f"QPushButton:hover {{ background-color: {Theme.BG_CONTROL_HOVER}; }}"
-                )
+        for btn in self._stage_btns:
+            ui.apply_button_style(
+                btn,
+                variant="primary" if btn.isChecked() else "neutral",
+                size="stage",
+            )
 
     def _on_load_geometry(self, path: str, dx_um: float):
         log.info("Loading geometry: %s (dx=%.1f µm)", path, dx_um)
@@ -496,11 +476,10 @@ def main():
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    configure_pyqtgraph(pg)
+    ui.configure_pyqtgraph(pg)
 
-    app = QApplication(sys.argv)
-    app.setApplicationName("droplesim")
-    app.setStyleSheet(GLOBAL_QSS)
+    app = ui.create_app("droplesim", sys.argv)
+    ui.apply_app_theme(app)
 
     # Install SIGINT handler AFTER QApplication (Qt resets signal handlers)
     signal.signal(signal.SIGINT, lambda *_: app.quit())

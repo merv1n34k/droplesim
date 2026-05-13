@@ -2,19 +2,16 @@
 
 from __future__ import annotations
 
+import dropletui as ui
+from dropletui.theme import text_qss
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
     QFormLayout,
     QLabel,
-    QLineEdit,
     QWidget,
 )
-
-from droplesim.ui.theme import text_qss
 
 
 class EdgeDialog(QDialog):
@@ -42,11 +39,10 @@ class EdgeDialog(QDialog):
         layout.setSpacing(8)
 
         # -- Common fields --
-        self._name = QLineEdit(name)
+        self._name = ui.line_edit(name)
         layout.addRow("Name:", self._name)
 
-        self._kind = QComboBox()
-        self._kind.addItems(["wall", "inlet", "outlet"])
+        self._kind = ui.combo_box(["wall", "inlet", "outlet"])
         self._kind.setCurrentText(kind)
         self._kind.currentTextChanged.connect(self._on_kind_changed)
         layout.addRow("Kind:", self._kind)
@@ -63,13 +59,15 @@ class EdgeDialog(QDialog):
         wall_lay.setContentsMargins(0, 0, 0, 0)
         wall_lay.setSpacing(6)
 
-        self._contact_angle_override = QDoubleSpinBox()
-        self._contact_angle_override.setRange(0.0, 180.0)
-        self._contact_angle_override.setSingleStep(1.0)
-        self._contact_angle_override.setDecimals(1)
+        self._contact_angle_override = ui.double_box(
+            minimum=0.0,
+            maximum=180.0,
+            value=contact_angle_deg if contact_angle_deg is not None else 0.0,
+            step=1.0,
+            decimals=1,
+        )
         self._contact_angle_override.setSuffix(" °")
         self._contact_angle_override.setSpecialValueText("Use global")
-        self._contact_angle_override.setValue(contact_angle_deg if contact_angle_deg is not None else 0.0)
         wall_lay.addRow("Contact angle:", self._contact_angle_override)
 
         layout.addRow(self._wall_widget)
@@ -80,22 +78,23 @@ class EdgeDialog(QDialog):
         inlet_lay.setContentsMargins(0, 0, 0, 0)
         inlet_lay.setSpacing(6)
 
-        self._phi = QComboBox()
-        self._phi.addItems(["Aqueous (phi=0)", "Oil (phi=1)"])
+        self._phi = ui.combo_box(["Aqueous (phi=0)", "Oil (phi=1)"])
         self._phi.setCurrentIndex(0 if phi < 0.5 else 1)
         inlet_lay.addRow("Phase:", self._phi)
 
-        self._flow_rate = QDoubleSpinBox()
-        self._flow_rate.setRange(0.0, 10000.0)
-        self._flow_rate.setSingleStep(0.1)
-        self._flow_rate.setDecimals(3)
+        self._flow_rate = ui.double_box(
+            minimum=0.0,
+            maximum=10000.0,
+            value=flow_rate,
+            step=0.1,
+            decimals=3,
+        )
         self._flow_rate.setSuffix(" µL/min")
-        self._flow_rate.setValue(flow_rate)
         self._flow_rate.valueChanged.connect(self._on_flow_rate_changed)
         inlet_lay.addRow("Flow rate:", self._flow_rate)
 
         self._vel_label = QLabel("—")
-        self._vel_label.setStyleSheet("color: #888888;")
+        self._vel_label.setStyleSheet(text_qss("muted"))
         inlet_lay.addRow("Velocity:", self._vel_label)
 
         self._flip = QCheckBox("Flip flow direction")
@@ -111,17 +110,20 @@ class EdgeDialog(QDialog):
         outlet_lay.setContentsMargins(0, 0, 0, 0)
         outlet_lay.setSpacing(6)
 
-        self._outlet_bc = QComboBox()
-        self._outlet_bc.addItems(["Zero gradient (Neumann)", "Atmospheric (fixed pressure)"])
+        self._outlet_bc = ui.combo_box(
+            ["Zero gradient (Neumann)", "Atmospheric (fixed pressure)"]
+        )
         self._outlet_bc.setCurrentIndex(1 if outlet_bc == "pressure" else 0)
         self._outlet_bc.currentIndexChanged.connect(self._on_outlet_bc_changed)
         outlet_lay.addRow("Outlet type:", self._outlet_bc)
 
-        self._rho_target = QDoubleSpinBox()
-        self._rho_target.setRange(0.9, 1.1)
-        self._rho_target.setSingleStep(0.001)
-        self._rho_target.setDecimals(4)
-        self._rho_target.setValue(rho_target)
+        self._rho_target = ui.double_box(
+            minimum=0.9,
+            maximum=1.1,
+            value=rho_target,
+            step=0.001,
+            decimals=4,
+        )
         self._rho_target_label = QLabel("Backpressure (rho):")
         rho_hint = QLabel("1.0 = atmospheric, >1.0 = backpressure")
         rho_hint.setStyleSheet(text_qss("subtle", font_size=11))
@@ -159,10 +161,10 @@ class EdgeDialog(QDialog):
             depth_m = self._channel_depth_um * 1e-6
             u = Q_m3s / (width_m * depth_m)
             self._vel_label.setText(f"{u:.4e} m/s")
-            self._vel_label.setStyleSheet("color: #3498db;")
+            self._vel_label.setStyleSheet(text_qss("primary"))
         else:
             self._vel_label.setText("—")
-            self._vel_label.setStyleSheet("color: #888888;")
+            self._vel_label.setStyleSheet(text_qss("muted"))
 
     def result_data(self) -> dict:
         kind = self._kind.currentText()
