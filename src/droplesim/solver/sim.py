@@ -323,28 +323,19 @@ def _chemical_potential(phi, kappa, beta, nbr8, nbr8_solid, phi_wall=1.0):
 
 def _allen_cahn_step(phi, ux, uy, mu, mobility, nbr8, nbr8_solid,
                      phi_wall=1.0, interface_width=4):
-    """Conservative Allen-Cahn step (Chiu & Lin 2011).
+    """Conservative Allen-Cahn step.
 
-    ∂φ/∂t + ∇·(φu) = ∇·[ M·(∇φ - (4/W)·φ(1-φ)·n̂) ]
+    ∂φ/∂t + ∇·(φu) = M·∇²μ
 
-    Mass-conserving by construction (divergence form) with geometric
-    sharpening counter-term that maintains the interface profile.
+    Conservative advection (divergence form) preserves mass.
+    Cahn-Hilliard diffusion M·∇²μ provides thermodynamic driving force
+    toward equilibrium (φ=0 or φ=1) via the double-well chemical potential.
     """
-    dphidx, dphidy = _grad(phi, nbr8, nbr8_solid, wall_value=phi_wall)
-    grad_mag = jnp.sqrt(dphidx**2 + dphidy**2 + 1e-30)
-    nx = dphidx / grad_mag
-    ny = dphidy / grad_mag
-
     # Conservative advection: ∇·(φu)
     adv = _divergence(phi * ux, phi * uy, nbr8, nbr8_solid)
 
-    # Conservative diffusion with sharpening counter-term:
-    # flux J = M·(∇φ - (4/W)·φ(1-φ)·n̂)
-    W = float(interface_width)
-    sharpen = 4.0 * phi * (1.0 - phi) / W
-    Jx = mobility * (dphidx - sharpen * nx)
-    Jy = mobility * (dphidy - sharpen * ny)
-    diff = _divergence(Jx, Jy, nbr8, nbr8_solid)
+    # Cahn-Hilliard diffusion: M·∇²μ (mu wall_value=0: at φ=1 the double-well gives μ≈0)
+    diff = mobility * _laplacian(mu, nbr8, nbr8_solid, wall_value=0.0)
 
     phi_new = phi - adv + diff
     return jnp.clip(phi_new, 0.0, 1.0)
