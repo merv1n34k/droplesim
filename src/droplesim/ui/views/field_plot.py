@@ -39,7 +39,7 @@ class FieldPlot(QWidget):
         self._bar = pg.ColorBarItem(
             values=(0, 1), colorMap=colormap, interactive=False, width=15,
         )
-        self._bar.setImageItem(self._img, insert_in=self._plot.plotItem)
+        self._plot.plotItem.layout.addItem(self._bar, 2, 5)
 
         layout.addWidget(self._plot)
 

@@ -10,6 +10,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
+    QGridLayout,
     QHBoxLayout,
     QVBoxLayout,
     QWidget,
@@ -131,15 +132,9 @@ class SimView(QWidget):
         ]
 
         self._plots_container = QWidget()
-        self._plots_layout = QVBoxLayout(self._plots_container)
-        self._plots_layout.setSpacing(4)
-        self._plots_layout.setContentsMargins(0, 0, 0, 0)
-        self._row1 = QHBoxLayout()
-        self._row1.setSpacing(4)
-        self._row2 = QHBoxLayout()
-        self._row2.setSpacing(4)
-        self._plots_layout.addLayout(self._row1, stretch=1)
-        self._plots_layout.addLayout(self._row2, stretch=1)
+        self._grid = QGridLayout(self._plots_container)
+        self._grid.setSpacing(4)
+        self._grid.setContentsMargins(0, 0, 0, 0)
         self._relayout_grid()
         layout.addWidget(self._plots_container, stretch=1)
 
@@ -189,49 +184,33 @@ class SimView(QWidget):
         self._relayout_grid()
 
     def _relayout_grid(self):
-        """Redistribute visible plots into two centered rows."""
+        """Redistribute visible plots into a grid.
+
+        1-2 → 1 row;  3-4 → 2 rows, 2 cols;  5 → 2 rows, 3 cols.
+        """
         for f in self._fields:
-            self._row1.removeWidget(f)
-            self._row2.removeWidget(f)
+            self._grid.removeWidget(f)
             f.setParent(None)
-        # Clear stretch items
-        while self._row1.count():
-            item = self._row1.takeAt(0)
-            if item.widget():
-                item.widget().setParent(None)
-        while self._row2.count():
-            item = self._row2.takeAt(0)
-            if item.widget():
-                item.widget().setParent(None)
+            f.setVisible(False)
 
         visible = [
             f for f, chk in zip(self._fields, self._chk_for_field)
             if chk.isChecked()
         ]
-        for f in self._fields:
-            f.setVisible(f in visible)
-
         n = len(visible)
         if n == 0:
             return
 
-        if n <= 3:
-            # Single row, centered
-            self._row1.addStretch()
-            for f in visible:
-                self._row1.addWidget(f)
-            self._row1.addStretch()
+        if n <= 2:
+            cols = n
+        elif n <= 4:
+            cols = 2
         else:
-            # Two rows: ceil(n/2) on top, floor(n/2) on bottom, both centered
-            top_n = (n + 1) // 2
-            self._row1.addStretch()
-            for f in visible[:top_n]:
-                self._row1.addWidget(f)
-            self._row1.addStretch()
-            self._row2.addStretch()
-            for f in visible[top_n:]:
-                self._row2.addWidget(f)
-            self._row2.addStretch()
+            cols = 3
+
+        for i, f in enumerate(visible):
+            f.setVisible(True)
+            self._grid.addWidget(f, i // cols, i % cols)
 
     def set_geometry_info(
         self,
