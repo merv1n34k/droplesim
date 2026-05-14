@@ -6,7 +6,7 @@ import dropletui as ui
 import numpy as np
 import pyqtgraph as pg
 from dropletui.theme import text_qss
-from PySide6.QtCore import QRectF, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -15,11 +15,41 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from droplesim.ui.views.field_plot import FieldPlot
 
-def _build_lut(cmap: pg.ColorMap) -> np.ndarray:
-    """Build a (256, 3) uint8 RGB lookup table from a pyqtgraph ColorMap."""
-    table = cmap.getLookupTable(nPts=256, alpha=False)
-    return np.asarray(table, dtype=np.uint8)[:, :3]
+# ── Colormaps ────────────────────────────────────────────────────────────────
+
+# Phase: blue (aqueous=0) -> red (oil=1)
+_PHI_CMAP = pg.ColorMap(
+    pos=[0.0, 1.0],
+    color=[(52, 152, 219), (231, 76, 60)],
+)
+# Velocity: viridis-like
+_VEL_CMAP = pg.ColorMap(
+    pos=[0.0, 0.25, 0.5, 0.75, 1.0],
+    color=[
+        (68, 1, 84),
+        (59, 82, 139),
+        (33, 145, 140),
+        (94, 201, 98),
+        (253, 231, 37),
+    ],
+)
+# Pressure: cool-warm diverging (blue=low, white=1.0, red=high)
+_PRS_CMAP = pg.ColorMap(
+    pos=[0.0, 0.5, 1.0],
+    color=[(59, 76, 192), (221, 221, 221), (180, 4, 38)],
+)
+# Surfactant: dark -> green -> yellow
+_PSI_CMAP = pg.ColorMap(
+    pos=[0.0, 0.5, 1.0],
+    color=[(15, 15, 15), (39, 174, 96), (241, 196, 15)],
+)
+# Polymer stress: dark -> purple -> hot pink
+_STRESS_CMAP = pg.ColorMap(
+    pos=[0.0, 0.5, 1.0],
+    color=[(15, 15, 15), (128, 0, 128), (255, 105, 180)],
+)
 
 
 class SimView(QWidget):
@@ -84,62 +114,32 @@ class SimView(QWidget):
 
         layout.addLayout(btn_row)
 
-        # Image display row
+        # Image display row — 5 FieldPlot instances
         self._img_row = QHBoxLayout()
         self._img_row.setSpacing(4)
 
-        # Phase field plot
-        self._phi_plot = pg.PlotWidget(title="Phase Field (phi)")
-        self._phi_plot.setBackground(ui.Theme.BG_DARK)
-        self._phi_plot.setAspectLocked(True)
-        self._phi_plot.setLabel("bottom", "x [µm]")
-        self._phi_plot.setLabel("left", "y [µm]")
-        self._phi_img = pg.ImageItem()
-        self._phi_plot.addItem(self._phi_img)
-        self._img_row.addWidget(self._phi_plot)
+        self._phi_field = FieldPlot("phi", _PHI_CMAP)
+        self._img_row.addWidget(self._phi_field)
 
-        # Velocity magnitude plot
-        self._vel_plot = pg.PlotWidget(title="Velocity |u|")
-        self._vel_plot.setBackground(ui.Theme.BG_DARK)
-        self._vel_plot.setAspectLocked(True)
-        self._vel_plot.setLabel("bottom", "x [µm]")
-        self._vel_plot.setLabel("left", "y [µm]")
-        self._vel_img = pg.ImageItem()
-        self._vel_plot.addItem(self._vel_img)
-        self._img_row.addWidget(self._vel_plot)
+        self._vel_field = FieldPlot("|u|", _VEL_CMAP)
+        self._img_row.addWidget(self._vel_field)
 
-        # Pressure (rho) plot
-        self._prs_plot = pg.PlotWidget(title="Pressure (rho)")
-        self._prs_plot.setBackground(ui.Theme.BG_DARK)
-        self._prs_plot.setAspectLocked(True)
-        self._prs_plot.setLabel("bottom", "x [µm]")
-        self._prs_plot.setLabel("left", "y [µm]")
-        self._prs_img = pg.ImageItem()
-        self._prs_plot.addItem(self._prs_img)
-        self._prs_plot.setVisible(False)
-        self._img_row.addWidget(self._prs_plot)
+        self._prs_field = FieldPlot("rho", _PRS_CMAP)
+        self._prs_field.setVisible(False)
+        self._img_row.addWidget(self._prs_field)
 
-        # Surfactant (ψ) plot
-        self._psi_plot = pg.PlotWidget(title="Surfactant (psi)")
-        self._psi_plot.setBackground(ui.Theme.BG_DARK)
-        self._psi_plot.setAspectLocked(True)
-        self._psi_plot.setLabel("bottom", "x [µm]")
-        self._psi_plot.setLabel("left", "y [µm]")
-        self._psi_img = pg.ImageItem()
-        self._psi_plot.addItem(self._psi_img)
-        self._psi_plot.setVisible(False)
-        self._img_row.addWidget(self._psi_plot)
+        self._psi_field = FieldPlot("psi", _PSI_CMAP)
+        self._psi_field.setVisible(False)
+        self._img_row.addWidget(self._psi_field)
 
-        # Polymer stress (tr(A)-2 trace deviation) plot
-        self._stress_plot = pg.PlotWidget(title="Polymer Stress tr(A)")
-        self._stress_plot.setBackground(ui.Theme.BG_DARK)
-        self._stress_plot.setAspectLocked(True)
-        self._stress_plot.setLabel("bottom", "x [µm]")
-        self._stress_plot.setLabel("left", "y [µm]")
-        self._stress_img = pg.ImageItem()
-        self._stress_plot.addItem(self._stress_img)
-        self._stress_plot.setVisible(False)
-        self._img_row.addWidget(self._stress_plot)
+        self._stress_field = FieldPlot("tr(A)", _STRESS_CMAP)
+        self._stress_field.setVisible(False)
+        self._img_row.addWidget(self._stress_field)
+
+        self._fields = [
+            self._phi_field, self._vel_field, self._prs_field,
+            self._psi_field, self._stress_field,
+        ]
 
         layout.addLayout(self._img_row, stretch=1)
 
@@ -183,58 +183,14 @@ class SimView(QWidget):
         self._status.setStyleSheet(text_qss("muted", padding="4px"))
         layout.addWidget(self._status)
 
-        # Pre-compute colormaps as (256, 3) uint8 LUTs
-        # Phase: blue (aqueous=0) -> red (oil=1)
-        self._phi_lut = _build_lut(pg.ColorMap(
-            pos=[0.0, 1.0],
-            color=[(52, 152, 219), (231, 76, 60)],
-        ))
-        # Velocity: viridis-like
-        self._vel_lut = _build_lut(pg.ColorMap(
-            pos=[0.0, 0.25, 0.5, 0.75, 1.0],
-            color=[
-                (68, 1, 84),
-                (59, 82, 139),
-                (33, 145, 140),
-                (94, 201, 98),
-                (253, 231, 37),
-            ],
-        ))
-        # Pressure: cool-warm diverging (blue=low, white=1.0, red=high)
-        self._prs_lut = _build_lut(pg.ColorMap(
-            pos=[0.0, 0.5, 1.0],
-            color=[(59, 76, 192), (221, 221, 221), (180, 4, 38)],
-        ))
-        # Surfactant: dark → green → yellow
-        self._psi_lut = _build_lut(pg.ColorMap(
-            pos=[0.0, 0.5, 1.0],
-            color=[(15, 15, 15), (39, 174, 96), (241, 196, 15)],
-        ))
-        # Polymer stress: dark → purple → hot pink
-        self._stress_lut = _build_lut(pg.ColorMap(
-            pos=[0.0, 0.5, 1.0],
-            color=[(15, 15, 15), (128, 0, 128), (255, 105, 180)],
-        ))
-
-        self._dx_um = 2.5
-        self._origin_um = (0.0, 0.0)
-        self._ny = 0
-        self._nx = 0
-        self._fluid_y = None
-        self._fluid_x = None
-        self._phi_rgba = None
-        self._vel_rgba = None
-        self._prs_rgba = None
-        self._psi_rgba = None
-        self._stress_rgba = None
         self._first_frame = True
 
     def _on_toggle(self, _checked: bool):
-        self._phi_plot.setVisible(self._chk_phase.isChecked())
-        self._vel_plot.setVisible(self._chk_velocity.isChecked())
-        self._prs_plot.setVisible(self._chk_pressure.isChecked())
-        self._psi_plot.setVisible(self._chk_surfactant.isChecked())
-        self._stress_plot.setVisible(self._chk_stress.isChecked())
+        self._phi_field.setVisible(self._chk_phase.isChecked())
+        self._vel_field.setVisible(self._chk_velocity.isChecked())
+        self._prs_field.setVisible(self._chk_pressure.isChecked())
+        self._psi_field.setVisible(self._chk_surfactant.isChecked())
+        self._stress_field.setVisible(self._chk_stress.isChecked())
 
     def set_geometry_info(
         self,
@@ -243,40 +199,17 @@ class SimView(QWidget):
         solid_mask: np.ndarray | None = None,
         fluid_yx: np.ndarray | None = None,
     ):
-        self._dx_um = dx_um
-        self._origin_um = origin_um
         self._first_frame = True
 
         if solid_mask is not None and fluid_yx is not None:
             ny, nx = solid_mask.shape
-            self._ny = ny
-            self._nx = nx
-            self._fluid_y = fluid_yx[:, 0]
-            self._fluid_x = fluid_yx[:, 1]
-
-            # Allocate persistent RGBA buffers — alpha set once, never changes
-            self._phi_rgba = np.zeros((ny, nx, 4), dtype=np.uint8)
-            self._phi_rgba[self._fluid_y, self._fluid_x, 3] = 255
-
-            self._vel_rgba = np.zeros((ny, nx, 4), dtype=np.uint8)
-            self._vel_rgba[self._fluid_y, self._fluid_x, 3] = 255
-
-            self._prs_rgba = np.zeros((ny, nx, 4), dtype=np.uint8)
-            self._prs_rgba[self._fluid_y, self._fluid_x, 3] = 255
-
-            self._psi_rgba = np.zeros((ny, nx, 4), dtype=np.uint8)
-            self._psi_rgba[self._fluid_y, self._fluid_x, 3] = 255
-
-            self._stress_rgba = np.zeros((ny, nx, 4), dtype=np.uint8)
-            self._stress_rgba[self._fluid_y, self._fluid_x, 3] = 255
+            fy = fluid_yx[:, 0]
+            fx = fluid_yx[:, 1]
+            for field in self._fields:
+                field.set_geometry(ny, nx, fy, fx, dx_um, origin_um)
         else:
-            self._fluid_y = None
-            self._fluid_x = None
-            self._phi_rgba = None
-            self._vel_rgba = None
-            self._prs_rgba = None
-            self._psi_rgba = None
-            self._stress_rgba = None
+            for field in self._fields:
+                field.clear_geometry()
 
     def set_running(self, running: bool):
         self._start_btn.setEnabled(not running)
@@ -302,62 +235,42 @@ class SimView(QWidget):
         mlups: float,
         extra: dict | None = None,
     ):
-        ox, oy = self._origin_um
-        dx = self._dx_um
-        ny, nx = self._ny, self._nx
-        rect = QRectF(ox, oy, nx * dx, ny * dx)
+        # Phase
+        if self._chk_phase.isChecked():
+            self._phi_field.update(phi, vmin=0.0, vmax=1.0, fmt=".2f")
 
-        if self._fluid_y is not None and self._phi_rgba is not None:
-            # Phase
-            if self._chk_phase.isChecked():
-                phi_idx = np.clip((phi * 255).astype(np.uint8), 0, 255)
-                self._phi_rgba[self._fluid_y, self._fluid_x, :3] = self._phi_lut[phi_idx]
-                self._phi_img.setImage(self._phi_rgba.transpose(1, 0, 2))
-                self._phi_img.setRect(rect)
+        # Velocity
+        if self._chk_velocity.isChecked():
+            vel = np.sqrt(ux**2 + uy**2)
+            vmax = float(vel.max()) or 1.0
+            self._vel_field.update(vel, vmin=0.0, vmax=vmax)
 
-            # Velocity
-            if self._chk_velocity.isChecked():
-                vel = np.sqrt(ux**2 + uy**2)
-                vmax = float(vel.max()) or 1.0
-                vel_idx = np.clip((vel / vmax * 255).astype(np.uint8), 0, 255)
-                self._vel_rgba[self._fluid_y, self._fluid_x, :3] = self._vel_lut[vel_idx]
-                self._vel_img.setImage(self._vel_rgba.transpose(1, 0, 2))
-                self._vel_img.setRect(rect)
+        # Pressure (rho deviation from 1.0)
+        if self._chk_pressure.isChecked():
+            dev = np.clip((rho - 1.0) / 0.01, -1.0, 1.0)
+            rmin, rmax = float(rho.min()), float(rho.max())
+            self._prs_field.update(dev, vmin=-1.0, vmax=1.0, fmt=".4f")
+            # Override legend with actual rho range
+            self._prs_field._legend.setText(f"rho: {rmin:.4f} – {rmax:.4f}")
 
-            # Pressure (rho deviation from 1.0)
-            if self._chk_pressure.isChecked():
-                # Map rho around 1.0: clamp deviation to +/-0.01 for visibility
-                dev = np.clip((rho - 1.0) / 0.01, -1.0, 1.0)
-                prs_idx = np.clip(((dev + 1.0) * 0.5 * 255).astype(np.uint8), 0, 255)
-                self._prs_rgba[self._fluid_y, self._fluid_x, :3] = self._prs_lut[prs_idx]
-                self._prs_img.setImage(self._prs_rgba.transpose(1, 0, 2))
-                self._prs_img.setRect(rect)
+        # Surfactant
+        psi = extra.get("psi") if extra else None
+        if self._chk_surfactant.isChecked() and psi is not None:
+            psi_max = float(psi.max()) or 1.0
+            self._psi_field.update(psi, vmin=0.0, vmax=psi_max)
 
-            # Surfactant
-            psi = extra.get("psi") if extra else None
-            if self._chk_surfactant.isChecked() and psi is not None and self._psi_rgba is not None:
-                psi_max = float(psi.max()) or 1.0
-                psi_idx = np.clip((psi / psi_max * 255).astype(np.uint8), 0, 255)
-                self._psi_rgba[self._fluid_y, self._fluid_x, :3] = self._psi_lut[psi_idx]
-                self._psi_img.setImage(self._psi_rgba.transpose(1, 0, 2))
-                self._psi_img.setRect(rect)
-
-            # Polymer stress: tr(A) - 2 = (A_xx + A_yy - 2)
-            A_xx = extra.get("A_xx") if extra else None
-            if self._chk_stress.isChecked() and A_xx is not None and self._stress_rgba is not None:
-                A_yy = extra["A_yy"]
-                trace_dev = A_xx + A_yy - 2.0
-                s_max = float(np.abs(trace_dev).max()) or 1.0
-                s_idx = np.clip((trace_dev / s_max * 255).astype(np.uint8), 0, 255)
-                self._stress_rgba[self._fluid_y, self._fluid_x, :3] = self._stress_lut[s_idx]
-                self._stress_img.setImage(self._stress_rgba.transpose(1, 0, 2))
-                self._stress_img.setRect(rect)
+        # Polymer stress: tr(A) - 2
+        A_xx = extra.get("A_xx") if extra else None
+        if self._chk_stress.isChecked() and A_xx is not None:
+            A_yy = extra["A_yy"]
+            trace_dev = A_xx + A_yy - 2.0
+            s_max = float(np.abs(trace_dev).max()) or 1.0
+            self._stress_field.update(trace_dev, vmin=0.0, vmax=s_max)
 
         if self._first_frame:
-            for plot in (self._phi_plot, self._vel_plot, self._prs_plot,
-                         self._psi_plot, self._stress_plot):
-                if plot.isVisible():
-                    plot.autoRange()
+            for field in self._fields:
+                if field.isVisible():
+                    field.auto_range()
             self._first_frame = False
 
         self._status.setStyleSheet(text_qss("success", padding="4px"))
