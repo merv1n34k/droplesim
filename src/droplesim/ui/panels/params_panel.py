@@ -71,7 +71,7 @@ class ParamsPanel(QWidget):
         cont_lay.setSpacing(ui.Theme.SPACE_2)
 
         self._mu_cont = self._add_spin(cont_lay, "µ [mPa·s]:", 0.1, 500.0, 1.24, 0.1)
-        self._rho_cont = self._add_spin(cont_lay, "ρ [kg/m³]:", 500.0, 2000.0, 1050.0, 10.0)
+        self._rho_cont = self._add_spin(cont_lay, "ρ [kg/m³]:", 500.0, 2000.0, 1614.0, 10.0)
 
         layout.addWidget(cont_group)
 
@@ -80,8 +80,8 @@ class ParamsPanel(QWidget):
         disp_lay = QVBoxLayout(disp_group)
         disp_lay.setSpacing(ui.Theme.SPACE_2)
 
-        self._mu_disp = self._add_spin(disp_lay, "µ [mPa·s]:", 0.1, 500.0, 1.75, 0.1)
-        self._rho_disp = self._add_spin(disp_lay, "ρ [kg/m³]:", 500.0, 2000.0, 1000.0, 10.0)
+        self._mu_disp = self._add_spin(disp_lay, "µ [mPa·s]:", 0.1, 500.0, 1.2, 0.1)
+        self._rho_disp = self._add_spin(disp_lay, "ρ [kg/m³]:", 500.0, 2000.0, 1015.0, 10.0)
 
         layout.addWidget(disp_group)
 
@@ -90,7 +90,7 @@ class ParamsPanel(QWidget):
         intf_lay = QVBoxLayout(intf_group)
         intf_lay.setSpacing(ui.Theme.SPACE_2)
 
-        self._sigma = self._add_spin(intf_lay, "σ [mN/m]:", 0.1, 100.0, 3.5, 0.5)
+        self._sigma = self._add_spin(intf_lay, "σ [mN/m]:", 0.1, 100.0, 6.0, 0.5)
         self._contact_angle = self._add_spin(
             intf_lay, "Contact angle [°]:", 90.0, 180.0, 150.0, 1.0
         )
@@ -350,10 +350,10 @@ class ParamsPanel(QWidget):
         disp = p.get("disperse", {})
         intf = p.get("interface", {})
         self._mu_cont.setValue(cont.get("mu_mPas", 1.24))
-        self._rho_cont.setValue(cont.get("rho_kg_m3", 1050.0))
-        self._mu_disp.setValue(disp.get("mu_mPas", 1.75))
-        self._rho_disp.setValue(disp.get("rho_kg_m3", 1000.0))
-        self._sigma.setValue(intf.get("sigma_mNm", 3.5))
+        self._rho_cont.setValue(cont.get("rho_kg_m3", 1614.0))
+        self._mu_disp.setValue(disp.get("mu_mPas", 1.2))
+        self._rho_disp.setValue(disp.get("rho_kg_m3", 1015.0))
+        self._sigma.setValue(intf.get("sigma_mNm", 6.0))
         self._contact_angle.setValue(intf.get("contact_angle_deg", 150.0))
         s = state.simulation
         self._tau_c.setValue(s.get("tau_c", 0.55))
