@@ -28,7 +28,7 @@ from droplesim.solver.geometry2d import (
     build_sparse_maps,
     extract_edges,
     load_contours,
-    rasterize_polygons,
+    rasterize_contours,
 )
 from droplesim.solver.sim import PhysParams, TwoPhaseSim
 from droplesim.ui.frame_buffer import FrameBuffer, FrameRecord
@@ -117,6 +117,7 @@ class MainWindow(QMainWindow):
 
         # Views — order: Geometry, Phase, BCs, Simulate
         self._geometry_view = GeometryView()
+        self._geometry_view.solid_mask_changed.connect(self._on_solid_mask_changed)
         self._stack.addWidget(self._geometry_view)
 
         self._phase_view = PhaseView()
@@ -181,7 +182,7 @@ class MainWindow(QMainWindow):
             self._dx_um = dx_um
             polygons_mm, contours_mm, _ = load_contours(path)
             self._polygons_mm = polygons_mm
-            solid_mask, origin_um = rasterize_polygons(polygons_mm, dx_um)
+            solid_mask, origin_um = rasterize_contours(polygons_mm, contours_mm, dx_um)
             self._solid_mask = solid_mask
             self._origin_um = origin_um
 
@@ -222,6 +223,26 @@ class MainWindow(QMainWindow):
 
     def _on_channel_depth_changed(self, depth_um: float):
         self._edge_view.set_channel_depth(depth_um)
+
+    def _on_solid_mask_changed(self, solid_mask: np.ndarray):
+        self._solid_mask = solid_mask.copy()
+        self._geometry_view.set_geometry(self._solid_mask, self._dx_um, self._origin_um)
+        self._edge_view.set_solid_mask(self._solid_mask)
+        if self._edge_polylines_mm is not None:
+            self._phase_view.set_geometry(
+                self._solid_mask, self._dx_um, self._origin_um, self._edge_polylines_mm
+            )
+        n_fluid = int((~self._solid_mask).sum())
+        fluid_yx = np.argwhere(~self._solid_mask).astype(np.int32)
+        self._fluid_yx = fluid_yx
+        index_map = np.full(self._solid_mask.shape, -1, dtype=np.int32)
+        index_map[~self._solid_mask] = np.arange(n_fluid, dtype=np.int32)
+        self._sim_view.set_geometry_info(
+            self._dx_um, self._origin_um, self._solid_mask, fluid_yx, index_map=index_map,
+        )
+        ny, nx = self._solid_mask.shape
+        pct = 100.0 * n_fluid / (ny * nx)
+        self._set_status(f"{nx}x{ny} grid  |  {n_fluid:,} fluid cells ({pct:.1f}%)")
 
     def _on_auto_drho(self):
         if self._solid_mask is None:

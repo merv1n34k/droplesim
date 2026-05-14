@@ -28,7 +28,7 @@ _OVERLAP_RGBA = np.array([240, 240, 240, 130], dtype=np.uint8)
 
 
 class PhiDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, phi: float = 1.0):
         super().__init__(parent)
         self.setWindowTitle("Set Phase")
         self.setMinimumWidth(250)
@@ -46,6 +46,8 @@ class PhiDialog(QDialog):
             decimals=2,
         )
         layout.addRow("Phi:", self._phi)
+        self._preset.setCurrentIndex(0 if phi > 0.5 else 1)
+        self._phi.setValue(phi)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
@@ -59,12 +61,18 @@ class PhiDialog(QDialog):
         return self._phi.value()
 
 
+_DRAG_THRESHOLD = 3.0
+
+
 class DragViewBox(pg.ViewBox):
     rect_drawn = Signal(float, float, float, float)
+    point_clicked = Signal(float, float)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self._press_pos = None
         self._drag_start = None
+        self._dragging = False
         self._drag_rect = None
         self._bounds = None
 
@@ -80,13 +88,20 @@ class DragViewBox(pg.ViewBox):
 
     def mousePressEvent(self, ev):
         if ev.button() == ev.button().LeftButton:
+            self._press_pos = ev.pos()
             self._drag_start = self._clamp(self.mapToView(ev.pos()))
+            self._dragging = False
             ev.accept()
         else:
             super().mousePressEvent(ev)
 
     def mouseMoveEvent(self, ev):
-        if self._drag_start is not None:
+        if self._press_pos is not None:
+            delta = ev.pos() - self._press_pos
+            dist = (delta.x() ** 2 + delta.y() ** 2) ** 0.5
+            if dist > _DRAG_THRESHOLD:
+                self._dragging = True
+        if self._drag_start is not None and self._dragging:
             cx, cy = self._clamp(self.mapToView(ev.pos()))
             if self._drag_rect is not None:
                 self.removeItem(self._drag_rect)
@@ -101,16 +116,22 @@ class DragViewBox(pg.ViewBox):
 
     def mouseReleaseEvent(self, ev):
         if self._drag_start is not None and ev.button() == ev.button().LeftButton:
-            x2, y2 = self._clamp(self.mapToView(ev.pos()))
-            x1, y1 = self._drag_start
             if self._drag_rect is not None:
                 self.removeItem(self._drag_rect)
                 self._drag_rect = None
+            if self._dragging:
+                x2, y2 = self._clamp(self.mapToView(ev.pos()))
+                x1, y1 = self._drag_start
+                if abs(x2 - x1) > 1 and abs(y2 - y1) > 1:
+                    self.rect_drawn.emit(
+                        min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
+                    )
+            else:
+                vpt = self.mapToView(ev.pos())
+                self.point_clicked.emit(vpt.x(), vpt.y())
+            self._press_pos = None
             self._drag_start = None
-            if abs(x2 - x1) > 1 and abs(y2 - y1) > 1:
-                self.rect_drawn.emit(
-                    min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)
-                )
+            self._dragging = False
             ev.accept()
         else:
             super().mouseReleaseEvent(ev)
@@ -127,6 +148,7 @@ class PhaseView(QWidget):
 
         self._vb = DragViewBox()
         self._vb.rect_drawn.connect(self._on_rect_drawn)
+        self._vb.point_clicked.connect(self._on_point_clicked)
         self._plot = pg.PlotWidget(
             viewBox=self._vb, title="Phase Regions  (drag rectangle to paint)"
         )
@@ -147,6 +169,7 @@ class PhaseView(QWidget):
         self._plot.plotItem.layout.addItem(self._phi_bar, 2, 5)
 
         self._panel = PhasePanel()
+        self._panel.edit_requested.connect(self._on_edit_region)
         self._panel.delete_requested.connect(self._on_delete_region)
         layout.addWidget(
             ui.split_view(
@@ -193,6 +216,7 @@ class PhaseView(QWidget):
                 )
                 self._wall_curves.append(curve)
 
+        self._redraw_regions()
         self._plot.autoRange()
 
     def _fluid_mask_for_region(self, region: dict) -> np.ndarray:
@@ -272,6 +296,16 @@ class PhaseView(QWidget):
             label = "oil" if phi > 0.5 else "aqueous"
             log.info("Phase region added: %s (phi=%.1f)", label, phi)
 
+    def _on_point_clicked(self, mx: float, my: float):
+        for i in range(len(self._regions) - 1, -1, -1):
+            r = self._regions[i]
+            if (
+                r["x1_um"] <= mx <= r["x2_um"]
+                and r["y1_um"] <= my <= r["y2_um"]
+            ):
+                self._on_edit_region(i)
+                return
+
     def _add_fill_item(self, region: dict):
         rgba = self._fluid_mask_for_region(region)
         ny, nx = self._solid_mask.shape
@@ -285,13 +319,29 @@ class PhaseView(QWidget):
         self._plot.addItem(img)
         self._fill_items.append(img)
 
+    def _redraw_regions(self):
+        for item in self._fill_items:
+            self._plot.removeItem(item)
+        self._fill_items.clear()
+        for r in self._regions:
+            self._add_fill_item(r)
+        self._redraw_overlap()
+        self._panel.set_regions(self._regions)
+
+    def _on_edit_region(self, idx: int):
+        if not (0 <= idx < len(self._regions)):
+            return
+        region = self._regions[idx]
+        dlg = PhiDialog(self, phi=region.get("phi", 1.0))
+        if dlg.exec():
+            region["phi"] = dlg.phi_value()
+            self._redraw_regions()
+            self.phase_changed.emit()
+
     def _on_delete_region(self, idx: int):
         if 0 <= idx < len(self._regions):
             self._regions.pop(idx)
-            item = self._fill_items.pop(idx)
-            self._plot.removeItem(item)
-            self._redraw_overlap()
-            self._panel.set_regions(self._regions)
+            self._redraw_regions()
             self.phase_changed.emit()
 
     def get_regions(self) -> list[dict]:
@@ -327,11 +377,5 @@ class PhaseView(QWidget):
         return phi
 
     def set_regions_from_state(self, regions: list[dict]):
-        for item in self._fill_items:
-            self._plot.removeItem(item)
-        self._fill_items.clear()
         self._regions = list(regions)
-        for r in self._regions:
-            self._add_fill_item(r)
-        self._redraw_overlap()
-        self._panel.set_regions(self._regions)
+        self._redraw_regions()

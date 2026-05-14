@@ -395,9 +395,48 @@ def _rasterize(
     fluid = np.zeros((ny, nx), dtype=bool)
     for poly in polygons:
         path = mpath.Path(poly)
-        fluid |= path.contains_points(pts_grid).reshape(ny, nx)
+        fluid ^= path.contains_points(pts_grid).reshape(ny, nx)
 
     return fluid, (x_min, y_min)
+
+
+def _burn_contour_walls(
+    solid_mask: np.ndarray,
+    contours: list[list[tuple[float, float]]],
+    origin_mm: tuple[float, float],
+    dx_mm: float,
+) -> None:
+    """Rasterize contour polylines into solid cells (1-cell thickness)."""
+    if not contours:
+        return
+
+    ny, nx = solid_mask.shape
+    x0, y0 = origin_mm
+
+    def xy_to_ij(x: float, y: float) -> tuple[int, int]:
+        ix = int(round((x - x0) / dx_mm - 0.5))
+        iy = int(round((y - y0) / dx_mm - 0.5))
+        ix = min(max(ix, 0), nx - 1)
+        iy = min(max(iy, 0), ny - 1)
+        return iy, ix
+
+    for contour in contours:
+        if len(contour) < 2:
+            continue
+        for k in range(len(contour) - 1):
+            x0s, y0s = contour[k]
+            x1s, y1s = contour[k + 1]
+            iy0, ix0 = xy_to_ij(x0s, y0s)
+            iy1, ix1 = xy_to_ij(x1s, y1s)
+            n = max(abs(ix1 - ix0), abs(iy1 - iy0))
+            if n == 0:
+                solid_mask[iy0, ix0] = True
+                continue
+            xs = np.linspace(ix0, ix1, n + 1)
+            ys = np.linspace(iy0, iy1, n + 1)
+            ixs = np.rint(xs).astype(np.int32)
+            iys = np.rint(ys).astype(np.int32)
+            solid_mask[iys, ixs] = True
 
 
 # ── BC assignment ─────────────────────────────────────────────────────────────
@@ -514,6 +553,23 @@ def rasterize_polygons(
     """
     fluid_mask, (ox_mm, oy_mm) = _rasterize(polygons, dx_um / 1000.0)
     solid_mask = ~fluid_mask
+    origin_um = (ox_mm * 1000.0, oy_mm * 1000.0)
+    return solid_mask, origin_um
+
+
+def rasterize_contours(
+    polygons: list[list[tuple[float, float]]],
+    contours: list[list[tuple[float, float]]],
+    dx_um: float,
+) -> tuple[np.ndarray, tuple[float, float]]:
+    """Rasterize polygons and burn contours as solid divider walls.
+
+    This preserves internal/open CAD lines as barriers in the voxel mask.
+    """
+    fluid_mask, (ox_mm, oy_mm) = _rasterize(polygons, dx_um / 1000.0)
+    solid_mask = ~fluid_mask
+    open_contours = [c for c in contours if not _is_closed_chain(c)]
+    _burn_contour_walls(solid_mask, open_contours, (ox_mm, oy_mm), dx_um / 1000.0)
     origin_um = (ox_mm * 1000.0, oy_mm * 1000.0)
     return solid_mask, origin_um
 

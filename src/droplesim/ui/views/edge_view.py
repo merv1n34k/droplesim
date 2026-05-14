@@ -550,6 +550,10 @@ class EdgeView(QWidget):
     def get_areas(self) -> list[dict]:
         return self._areas
 
+    def set_solid_mask(self, solid_mask: np.ndarray):
+        self._solid_mask = solid_mask.copy()
+        self._redraw_all()
+
     def set_edges_from_state(self, edges: list[dict]):
         if len(edges) == len(self._edges):
             for i, e in enumerate(edges):
