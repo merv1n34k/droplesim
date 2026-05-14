@@ -235,7 +235,7 @@ class EdgeView(QWidget):
                 mid = (p0 + p1) / 2
                 arrow_len = 10 * self._dx_um
                 tip = mid + np.array(ndir) * arrow_len
-                angle = np.degrees(np.arctan2(-ndir[1], -ndir[0]))
+                angle = np.degrees(np.arctan2(ndir[1], ndir[0]))
                 arrow = pg.ArrowItem(
                     pos=(tip[0], tip[1]),
                     angle=angle,
@@ -299,7 +299,7 @@ class EdgeView(QWidget):
             tip_x = mid_x + math.cos(flow_angle) * arrow_len
             tip_y = mid_y + math.sin(flow_angle) * arrow_len
             # pyqtgraph ArrowItem angle: 0° = pointing left, measured CCW
-            pg_angle = np.degrees(np.arctan2(-math.sin(flow_angle), -math.cos(flow_angle)))
+            pg_angle = np.degrees(np.arctan2(math.sin(flow_angle), math.cos(flow_angle)))
             arrow = pg.ArrowItem(
                 pos=(tip_x, tip_y),
                 angle=pg_angle,
