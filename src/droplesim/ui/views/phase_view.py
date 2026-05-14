@@ -135,6 +135,17 @@ class PhaseView(QWidget):
         self._plot.setLabel("bottom", "x [µm]")
         self._plot.setLabel("left", "y [µm]")
 
+        # Color bar: phi scale (blue=0/aqueous → white=0.5 → red=1/oil)
+        phi_cmap = pg.ColorMap(
+            pos=[0.0, 0.5, 1.0],
+            color=[(52, 152, 219), (240, 240, 240), (231, 76, 60)],
+        )
+        self._phi_bar = pg.ColorBarItem(
+            values=(0, 1), colorMap=phi_cmap, interactive=False, width=15,
+            label="phi",
+        )
+        self._plot.plotItem.layout.addItem(self._phi_bar, 2, 5)
+
         self._panel = PhasePanel()
         self._panel.delete_requested.connect(self._on_delete_region)
         layout.addWidget(

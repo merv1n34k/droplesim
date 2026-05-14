@@ -22,8 +22,25 @@ _EDGE_COLORS = {
     "outlet": (231, 76, 60, 255),   # #e74c3c
 }
 
-_AREA_INLET_RGBA = np.array([52, 152, 219, 80], dtype=np.uint8)
 _AREA_OUTLET_RGBA = np.array([231, 76, 60, 80], dtype=np.uint8)
+
+# Diverging colormap for pressure: blue (low) → white (zero) → red (high)
+_PRS_CMAP = pg.ColorMap(
+    pos=[0.0, 0.5, 1.0],
+    color=[(59, 76, 192), (221, 221, 221), (180, 4, 38)],
+)
+_PRS_LUT = _PRS_CMAP.getLookupTable(nPts=256, alpha=False)
+
+
+def _pressure_rgba(pressure_mbar: float, p_max: float, alpha: int = 120) -> np.ndarray:
+    """Map a pressure value to RGBA using the diverging colormap.
+    0 mbar → blue end, p_max → red end."""
+    if p_max <= 0:
+        t = 128
+    else:
+        t = int(np.clip(pressure_mbar / p_max * 255, 0, 255))
+    rgb = _PRS_LUT[t]
+    return np.array([rgb[0], rgb[1], rgb[2], alpha], dtype=np.uint8)
 
 # Minimum drag distance (in view coords) to distinguish click from drag
 _DRAG_THRESHOLD = 3.0
@@ -134,6 +151,13 @@ class EdgeView(QWidget):
         self._plot.setLabel("bottom", "x [µm]")
         self._plot.setLabel("left", "y [µm]")
 
+        # Pressure color bar (blue→white→red)
+        self._prs_bar = pg.ColorBarItem(
+            values=(0, 1), colorMap=_PRS_CMAP, interactive=False, width=15,
+            label="P [mbar]",
+        )
+        self._plot.plotItem.layout.addItem(self._prs_bar, 2, 5)
+
         self._panel = EdgePanel()
         self._panel.edit_edge_requested.connect(self._on_edit_edge)
         self._panel.delete_edge_requested.connect(self._on_delete_edge)
@@ -222,6 +246,7 @@ class EdgeView(QWidget):
 
     def _redraw_all(self):
         self._p_max = self._max_pressure()
+        self._prs_bar.setLevels(values=(0, self._p_max))
         self._redraw_edges()
         self._redraw_areas()
 
@@ -238,7 +263,11 @@ class EdgeView(QWidget):
             pts = edge["points_um"]
             xs = [p[0] for p in pts]
             ys = [p[1] for p in pts]
-            color = _EDGE_COLORS.get(edge["kind"], (150, 150, 150, 220))
+            if edge["kind"] == "inlet" and edge.get("pressure_mbar", 0) > 0:
+                c = _pressure_rgba(edge["pressure_mbar"], self._p_max, alpha=255)
+                color = tuple(int(c[j]) for j in range(4))
+            else:
+                color = _EDGE_COLORS.get(edge["kind"], (150, 150, 150, 220))
             width = 3 if edge["kind"] != "wall" else 1.5
             curve = self._plot.plot(xs, ys, pen=pg.mkPen(color=color, width=width))
             self._edge_curves.append(curve)
@@ -298,7 +327,10 @@ class EdgeView(QWidget):
         )
 
         rgba = np.zeros((ny, nx, 4), dtype=np.uint8)
-        color = _AREA_INLET_RGBA if area["kind"] == "inlet" else _AREA_OUTLET_RGBA
+        if area["kind"] == "inlet":
+            color = _pressure_rgba(area.get("pressure_mbar", 0), self._p_max)
+        else:
+            color = _AREA_OUTLET_RGBA
         rgba[fluid_in_rect] = color
 
         img = pg.ImageItem()

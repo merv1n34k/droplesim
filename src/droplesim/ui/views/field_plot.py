@@ -1,4 +1,4 @@
-"""Reusable 2D field visualization: ImageItem + colormap LUT + min/max legend."""
+"""Reusable 2D field visualization: ImageItem + colormap LUT + ColorBar legend."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def _build_lut(cmap: pg.ColorMap) -> np.ndarray:
 
 
 class FieldPlot(QWidget):
-    """Reusable 2D field visualization: ImageItem + colormap LUT + legend."""
+    """Reusable 2D field visualization: ImageItem + colormap LUT + color bar."""
 
     def __init__(self, title: str, colormap: pg.ColorMap, parent=None):
         super().__init__(parent)
@@ -24,6 +24,7 @@ class FieldPlot(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self._title = title
+        self._cmap = colormap
         self._lut = _build_lut(colormap)
 
         self._plot = pg.PlotWidget(title=title)
@@ -35,13 +36,10 @@ class FieldPlot(QWidget):
         self._img = pg.ImageItem()
         self._plot.addItem(self._img)
 
-        self._legend = pg.TextItem(anchor=(1, 0))
-        self._legend.setColor("#cccccc")
-        font = self._legend.textItem.font()
-        font.setPointSize(9)
-        self._legend.setFont(font)
-        self._plot.addItem(self._legend)
-        self._legend.setVisible(False)
+        self._bar = pg.ColorBarItem(
+            values=(0, 1), colorMap=colormap, interactive=False, width=15,
+        )
+        self._bar.setImageItem(self._img, insert_in=self._plot.plotItem)
 
         layout.addWidget(self._plot)
 
@@ -91,10 +89,7 @@ class FieldPlot(QWidget):
         self._img.setImage(self._rgba.transpose(1, 0, 2))
         self._img.setRect(rect)
 
-        self._legend.setText(f"{self._title}: {vmin:{fmt}} – {vmax:{fmt}}")
-        vr = self._plot.viewRange()
-        self._legend.setPos(vr[0][1], vr[1][1])
-        self._legend.setVisible(True)
+        self._bar.setLevels(values=(vmin, vmax))
 
     def auto_range(self):
         self._plot.autoRange()

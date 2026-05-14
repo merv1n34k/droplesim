@@ -114,34 +114,34 @@ class SimView(QWidget):
 
         layout.addLayout(btn_row)
 
-        # Image display row — 5 FieldPlot instances
-        self._img_row = QHBoxLayout()
-        self._img_row.setSpacing(4)
-
+        # Image display — 5 FieldPlot instances in a 2-row centered grid
         self._phi_field = FieldPlot("phi", _PHI_CMAP)
-        self._img_row.addWidget(self._phi_field)
-
         self._vel_field = FieldPlot("|u|", _VEL_CMAP)
-        self._img_row.addWidget(self._vel_field)
-
-        self._prs_field = FieldPlot("rho", _PRS_CMAP)
-        self._prs_field.setVisible(False)
-        self._img_row.addWidget(self._prs_field)
-
+        self._prs_field = FieldPlot("\u0394\u03c1", _PRS_CMAP)
         self._psi_field = FieldPlot("psi", _PSI_CMAP)
-        self._psi_field.setVisible(False)
-        self._img_row.addWidget(self._psi_field)
-
         self._stress_field = FieldPlot("tr(A)", _STRESS_CMAP)
-        self._stress_field.setVisible(False)
-        self._img_row.addWidget(self._stress_field)
 
         self._fields = [
             self._phi_field, self._vel_field, self._prs_field,
             self._psi_field, self._stress_field,
         ]
+        self._chk_for_field = [
+            self._chk_phase, self._chk_velocity, self._chk_pressure,
+            self._chk_surfactant, self._chk_stress,
+        ]
 
-        layout.addLayout(self._img_row, stretch=1)
+        self._plots_container = QWidget()
+        self._plots_layout = QVBoxLayout(self._plots_container)
+        self._plots_layout.setSpacing(4)
+        self._plots_layout.setContentsMargins(0, 0, 0, 0)
+        self._row1 = QHBoxLayout()
+        self._row1.setSpacing(4)
+        self._row2 = QHBoxLayout()
+        self._row2.setSpacing(4)
+        self._plots_layout.addLayout(self._row1, stretch=1)
+        self._plots_layout.addLayout(self._row2, stretch=1)
+        self._relayout_grid()
+        layout.addWidget(self._plots_container, stretch=1)
 
         # Timeline bar (hidden until frames exist)
         self._timeline_row = QWidget()
@@ -186,11 +186,52 @@ class SimView(QWidget):
         self._first_frame = True
 
     def _on_toggle(self, _checked: bool):
-        self._phi_field.setVisible(self._chk_phase.isChecked())
-        self._vel_field.setVisible(self._chk_velocity.isChecked())
-        self._prs_field.setVisible(self._chk_pressure.isChecked())
-        self._psi_field.setVisible(self._chk_surfactant.isChecked())
-        self._stress_field.setVisible(self._chk_stress.isChecked())
+        self._relayout_grid()
+
+    def _relayout_grid(self):
+        """Redistribute visible plots into two centered rows."""
+        for f in self._fields:
+            self._row1.removeWidget(f)
+            self._row2.removeWidget(f)
+            f.setParent(None)
+        # Clear stretch items
+        while self._row1.count():
+            item = self._row1.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+        while self._row2.count():
+            item = self._row2.takeAt(0)
+            if item.widget():
+                item.widget().setParent(None)
+
+        visible = [
+            f for f, chk in zip(self._fields, self._chk_for_field)
+            if chk.isChecked()
+        ]
+        for f in self._fields:
+            f.setVisible(f in visible)
+
+        n = len(visible)
+        if n == 0:
+            return
+
+        if n <= 3:
+            # Single row, centered
+            self._row1.addStretch()
+            for f in visible:
+                self._row1.addWidget(f)
+            self._row1.addStretch()
+        else:
+            # Two rows: ceil(n/2) on top, floor(n/2) on bottom, both centered
+            top_n = (n + 1) // 2
+            self._row1.addStretch()
+            for f in visible[:top_n]:
+                self._row1.addWidget(f)
+            self._row1.addStretch()
+            self._row2.addStretch()
+            for f in visible[top_n:]:
+                self._row2.addWidget(f)
+            self._row2.addStretch()
 
     def set_geometry_info(
         self,
@@ -245,13 +286,11 @@ class SimView(QWidget):
             vmax = float(vel.max()) or 1.0
             self._vel_field.update(vel, vmin=0.0, vmax=vmax)
 
-        # Pressure (rho deviation from 1.0)
+        # Pressure (rho deviation from 1.0, symmetric diverging scale)
         if self._chk_pressure.isChecked():
-            dev = np.clip((rho - 1.0) / 0.01, -1.0, 1.0)
-            rmin, rmax = float(rho.min()), float(rho.max())
-            self._prs_field.update(dev, vmin=-1.0, vmax=1.0, fmt=".4f")
-            # Override legend with actual rho range
-            self._prs_field._legend.setText(f"rho: {rmin:.4f} – {rmax:.4f}")
+            dev = rho - 1.0
+            amp = max(abs(float(dev.min())), abs(float(dev.max())), 1e-8)
+            self._prs_field.update(dev, vmin=-amp, vmax=amp)
 
         # Surfactant
         psi = extra.get("psi") if extra else None
