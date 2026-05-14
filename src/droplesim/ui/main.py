@@ -27,7 +27,7 @@ from droplesim.solver.geometry2d import (
     assign_edge_bcs,
     build_sparse_maps,
     extract_edges,
-    load_polygons,
+    load_contours,
     rasterize_polygons,
 )
 from droplesim.solver.sim import PhysParams, TwoPhaseSim
@@ -179,13 +179,13 @@ class MainWindow(QMainWindow):
         log.info("Loading geometry: %s (dx=%.1f µm)", path, dx_um)
         try:
             self._dx_um = dx_um
-            polygons_mm, _ = load_polygons(path)
+            polygons_mm, contours_mm, _ = load_contours(path)
             self._polygons_mm = polygons_mm
             solid_mask, origin_um = rasterize_polygons(polygons_mm, dx_um)
             self._solid_mask = solid_mask
             self._origin_um = origin_um
 
-            edge_polylines_mm = extract_edges(polygons_mm)
+            edge_polylines_mm = extract_edges(contours_mm)
             self._edge_polylines_mm = edge_polylines_mm
 
             self._geometry_view.set_geometry(solid_mask, dx_um, origin_um)

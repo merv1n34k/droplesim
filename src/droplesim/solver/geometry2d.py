@@ -300,7 +300,7 @@ def _chain_segments(
     segments: list[list[tuple[float, float]]],
     tol: float = 1e-4,
 ) -> list[list[tuple[float, float]]]:
-    """Chain connected segments into closed polygons."""
+    """Chain connected segments into contour polylines."""
     if not segments:
         return []
 
@@ -338,16 +338,18 @@ def _chain_segments(
                     changed = True
         chains.append(chain)
 
-    # Keep only closed chains (start ≈ end) with enough points
-    polygons = []
-    for chain in chains:
-        if len(chain) >= 3 and dist(chain[0], chain[-1]) < tol * 100:
-            polygons.append(chain)
-
-    return polygons
+    return chains
 
 
-def _load_polygons(source: Path | str | IO) -> list[list[tuple[float, float]]]:
+def _is_closed_chain(chain: list[tuple[float, float]], tol: float = 1e-2) -> bool:
+    if len(chain) < 3:
+        return False
+    a = chain[0]
+    b = chain[-1]
+    return ((a[0] - b[0])**2 + (a[1] - b[1])**2) ** 0.5 < tol
+
+
+def _load_chains(source: Path | str | IO) -> list[list[tuple[float, float]]]:
     doc = _read_dxf(source)
     segments = _extract_segments(doc)
 
@@ -360,11 +362,15 @@ def _load_polygons(source: Path | str | IO) -> list[list[tuple[float, float]]]:
         for seg in segments
     ]
 
-    polygons = _chain_segments(scaled)
+    return _chain_segments(scaled)
+
+
+def _load_polygons(source: Path | str | IO) -> list[list[tuple[float, float]]]:
+    polygons = [chain for chain in _load_chains(source) if _is_closed_chain(chain)]
 
     if not polygons:
         raise ValueError(
-            f"Could not chain {len(segments)} segments into closed polygons. "
+            "Could not chain DXF entities into closed polygons. "
             "Check DXF file for stray entities."
         )
     return polygons
@@ -482,6 +488,20 @@ def load_polygons(
     Public wrapper around _load_polygons for GUI edge extraction.
     """
     return _load_polygons(source), _SCALE
+
+
+def load_contours(
+    source: Path | str | IO,
+) -> tuple[list[list[tuple[float, float]]], list[list[tuple[float, float]]], float]:
+    """Load DXF and return (closed_polygons_mm, all_contours_mm, scale)."""
+    chains = _load_chains(source)
+    polygons = [chain for chain in chains if _is_closed_chain(chain)]
+    if not polygons:
+        raise ValueError(
+            "Could not chain DXF entities into closed polygons. "
+            "Check DXF file for stray entities."
+        )
+    return polygons, chains, _SCALE
 
 
 def rasterize_polygons(
