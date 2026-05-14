@@ -196,7 +196,11 @@ class MainWindow(QMainWindow):
             n_fluid = int((~solid_mask).sum())
             fluid_yx = np.argwhere(~solid_mask).astype(np.int32)
             self._fluid_yx = fluid_yx
-            self._sim_view.set_geometry_info(dx_um, origin_um, solid_mask, fluid_yx)
+            index_map = np.full(solid_mask.shape, -1, dtype=np.int32)
+            index_map[~solid_mask] = np.arange(n_fluid, dtype=np.int32)
+            self._sim_view.set_geometry_info(
+                dx_um, origin_um, solid_mask, fluid_yx, index_map=index_map,
+            )
 
             ny, nx = solid_mask.shape
             n_total = ny * nx

@@ -113,6 +113,10 @@ class SimView(QWidget):
         self._chk_stress.toggled.connect(self._on_toggle)
         btn_row.addWidget(self._chk_stress)
 
+        self._clear_probes_btn = ui.button("Clear Probes", size="inline")
+        self._clear_probes_btn.clicked.connect(self._on_clear_probes)
+        btn_row.addWidget(self._clear_probes_btn)
+
         layout.addLayout(btn_row)
 
         # Image display — 5 FieldPlot instances in a 2-row centered grid
@@ -218,6 +222,7 @@ class SimView(QWidget):
         origin_um: tuple[float, float],
         solid_mask: np.ndarray | None = None,
         fluid_yx: np.ndarray | None = None,
+        index_map: np.ndarray | None = None,
     ):
         self._first_frame = True
 
@@ -226,7 +231,8 @@ class SimView(QWidget):
             fy = fluid_yx[:, 0]
             fx = fluid_yx[:, 1]
             for field in self._fields:
-                field.set_geometry(ny, nx, fy, fx, dx_um, origin_um)
+                field.set_geometry(ny, nx, fy, fx, dx_um, origin_um,
+                                  index_map=index_map)
         else:
             for field in self._fields:
                 field.clear_geometry()
@@ -320,6 +326,10 @@ class SimView(QWidget):
             self._frame_label.setText(f"Frame {current_idx + 1} / {n_frames}")
         else:
             self._frame_label.setText("")
+
+    def _on_clear_probes(self):
+        for field in self._fields:
+            field.clear_probes()
 
     def set_play_state(self, playing: bool):
         self._playing = playing
