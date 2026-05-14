@@ -376,10 +376,10 @@ class MainWindow(QMainWindow):
                 log.info("  u_scale=%.4e, phi_wall=%.4f (contact_angle=%.1f°)",
                          u_scale, sim.phi_wall, phys.contact_angle_deg)
                 sp = geom.sparse
-                for tid, phi_val, ux_lu, uy_lu in sim.inlet_data:
+                for tid, phi_val, rho_in in sim.inlet_data:
                     n_cells = int((sp.bc_map_fluid == tid).sum())
-                    log.info("  inlet type=%d: phi=%.1f ux_lu=%.4e uy_lu=%.4e  (%d cells)",
-                             tid, phi_val, ux_lu, uy_lu, n_cells)
+                    log.info("  inlet type=%d: phi=%.1f rho_in=%.6f  (%d cells)",
+                             tid, phi_val, rho_in, n_cells)
                 n_out = int(sp.outlet_mask.sum())
                 if n_out > 0:
                     # Show upstream direction for first outlet cell to verify detection
