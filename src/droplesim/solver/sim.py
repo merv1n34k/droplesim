@@ -589,6 +589,7 @@ class TwoPhaseSim:
         tau_c: float = 0.55,
         interface_width: int = 4,
         mobility: float = 0.1,
+        delta_rho_max: float = 0.005,
     ):
         self.geom = geometry
         self.phys = phys
@@ -614,16 +615,36 @@ class TwoPhaseSim:
         self.outlet_upstream = jnp.array(sp.outlet_upstream)
 
         # Pre-compute inlet data in LU: pressure → rho_lbm
-        # LBM EOS: p = rho * cs^2, cs^2 = 1/3
-        # rho_lbm = 1.0 + 3 * P_gauge_Pa / (rho_phys * (dx/dt)^2)
-        self.inlet_data = []
+        # Direct: delta_rho = 3 * P_Pa / (rho_phys * (dx/dt)^2)
+        # Physical pressures (hundreds of mbar) give delta_rho >> 0.01,
+        # violating the low-Mach constraint.  We cap delta_rho_max and
+        # rescale σ_lbm by the same factor so that Ca = μu/σ is preserved.
         dx_m = self.units.dx
         dt_s = self.units.dt
-        rho_phys = phys.rho_c  # reference physical density
+        rho_phys = phys.rho_c
         lattice_v2 = (dx_m / dt_s) ** 2
-        for spec in geometry.inlet_specs():
-            p_pa = spec.pressure_mbar * 100.0  # mbar → Pa
-            rho_in = 1.0 + 3.0 * p_pa / (rho_phys * lattice_v2)
+        inlet_specs = geometry.inlet_specs()
+        self.inlet_data = []
+        # Compute physical delta_rho for each inlet
+        drho_phys = []
+        for spec in inlet_specs:
+            p_pa = spec.pressure_mbar * 100.0
+            drho_phys.append(3.0 * p_pa / (rho_phys * lattice_v2))
+        drho_max = max(drho_phys) if drho_phys else 0.0
+        if drho_max > delta_rho_max:
+            alpha = delta_rho_max / drho_max  # < 1
+            # Rescale σ so Ca = μu/σ is preserved (u scales by alpha)
+            from dataclasses import replace as _dc_replace
+            self.units = _dc_replace(
+                self.units,
+                sigma_lbm=self.units.sigma_lbm * alpha,
+                kappa=self.units.kappa * alpha,
+                beta=self.units.beta * alpha,
+            )
+        else:
+            alpha = 1.0
+        for spec, drho in zip(inlet_specs, drho_phys):
+            rho_in = 1.0 + drho * alpha
             self.inlet_data.append((spec.type_id, spec.phi, rho_in))
 
         # Outlet BC mode (use first outlet spec's settings, default to Neumann)

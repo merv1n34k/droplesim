@@ -77,6 +77,7 @@ class MainWindow(QMainWindow):
         self._params.channel_depth_changed.connect(self._on_channel_depth_changed)
         self._params.save_config_requested.connect(self._on_save_config)
         self._params.load_config_requested.connect(self._on_load_config)
+        self._params.auto_drho_requested.connect(self._on_auto_drho)
 
         # Right panel: stage buttons + stacked views
         right = QWidget()
@@ -217,6 +218,39 @@ class MainWindow(QMainWindow):
 
     def _on_channel_depth_changed(self, depth_um: float):
         self._edge_view.set_channel_depth(depth_um)
+
+    def _on_auto_drho(self):
+        if self._solid_mask is None:
+            return
+        fluid = ~self._solid_mask
+        ny, nx = fluid.shape
+        # Minimum contiguous fluid run across all rows and columns
+        d_min = max(ny, nx)
+        for row in fluid:
+            run = 0
+            for v in row:
+                if v:
+                    run += 1
+                    d_min = min(d_min, run)
+                else:
+                    run = 0
+        for col in fluid.T:
+            run = 0
+            for v in col:
+                if v:
+                    run += 1
+                    d_min = min(d_min, run)
+                else:
+                    run = 0
+        d_min = max(d_min, 1)
+        L = max(ny, nx)
+        tau_c = self._params.simulation_dict().get("tau_c", 0.55)
+        nu = (tau_c - 0.5) / 3.0
+        delta_rho = 0.05 * 24.0 * nu * L / (d_min ** 2)
+        delta_rho = max(0.001, min(delta_rho, 0.05))
+        self._params.set_delta_rho_max(delta_rho)
+        log.info("Auto delta_rho_max: D_min=%d, L=%d, nu=%.4f → %.4f",
+                 d_min, L, nu, delta_rho)
 
     def _on_edges_changed(self):
         n_bc = sum(1 for e in self._edge_view.get_edges() if e["kind"] != "wall")
@@ -360,6 +394,7 @@ class MainWindow(QMainWindow):
                     tau_c=s["tau_c"],
                     interface_width=s["interface_width"],
                     mobility=s["mobility"],
+                    delta_rho_max=s.get("delta_rho_max", 0.005),
                 )
                 self._current_sim = sim
                 phi_init = self._phase_view.build_phi_init()

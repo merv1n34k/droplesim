@@ -20,6 +20,7 @@ class ParamsPanel(QWidget):
     channel_depth_changed = Signal(float)
     save_config_requested = Signal()
     load_config_requested = Signal(str)
+    auto_drho_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -131,6 +132,19 @@ class ParamsPanel(QWidget):
         self._mobility = self._add_spin(
             adv_lay, "Mobility:", 0.01, 1.0, 0.1, 0.01, decimals=3
         )
+
+        drho_row = QHBoxLayout()
+        lbl = QLabel("Δρ_max:")
+        lbl.setMinimumWidth(110)
+        drho_row.addWidget(lbl)
+        self._delta_rho_max = ui.double_box(
+            minimum=0.001, maximum=0.1, value=0.005, step=0.001, decimals=4
+        )
+        drho_row.addWidget(self._delta_rho_max)
+        self._auto_drho_btn = ui.button("Auto", size="inline")
+        self._auto_drho_btn.clicked.connect(self.auto_drho_requested.emit)
+        drho_row.addWidget(self._auto_drho_btn)
+        adv_lay.addLayout(drho_row)
 
         self._advanced.toggled.connect(self._on_advanced_toggled)
         self._on_advanced_toggled(False)
@@ -307,11 +321,15 @@ class ParamsPanel(QWidget):
             }
         return d
 
+    def set_delta_rho_max(self, value: float):
+        self._delta_rho_max.setValue(value)
+
     def simulation_dict(self) -> dict:
         return {
             "tau_c": self._tau_c.value(),
             "interface_width": self._iw.value(),
             "mobility": self._mobility.value(),
+            "delta_rho_max": self._delta_rho_max.value(),
             "emit_interval": self._emit_interval.value(),
             "history_frames": self._history_frames.value(),
         }
@@ -341,6 +359,7 @@ class ParamsPanel(QWidget):
         self._tau_c.setValue(s.get("tau_c", 0.55))
         self._iw.setValue(s.get("interface_width", 4))
         self._mobility.setValue(s.get("mobility", 0.1))
+        self._delta_rho_max.setValue(s.get("delta_rho_max", 0.005))
         self._emit_interval.setValue(s.get("emit_interval", 50))
         self._history_frames.setValue(s.get("history_frames", 1000))
         surf = p.get("surfactant")
