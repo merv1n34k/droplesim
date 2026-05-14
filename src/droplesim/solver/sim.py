@@ -300,19 +300,53 @@ def _grad(field, nbr8, nbr8_solid, wall_value=1.0):
     return dfdx, dfdy
 
 
+def _divergence(fx, fy, nbr8, nbr8_solid, wall_value_x=0.0, wall_value_y=0.0):
+    """∇·F = ∂Fx/∂x + ∂Fy/∂y using D2Q9-weighted stencil."""
+    fx_nbr = fx[nbr8]
+    fx_nbr = jnp.where(nbr8_solid, wall_value_x, fx_nbr)
+    fy_nbr = fy[nbr8]
+    fy_nbr = jnp.where(nbr8_solid, wall_value_y, fy_nbr)
+
+    dFx_dx = (1.0 / 3.0) * (fx_nbr[0] - fx_nbr[1]) + \
+             (1.0 / 12.0) * (fx_nbr[4] + fx_nbr[6] - fx_nbr[5] - fx_nbr[7])
+    dFy_dy = (1.0 / 3.0) * (fy_nbr[2] - fy_nbr[3]) + \
+             (1.0 / 12.0) * (fy_nbr[4] + fy_nbr[5] - fy_nbr[6] - fy_nbr[7])
+
+    return dFx_dx + dFy_dy
+
+
 def _chemical_potential(phi, kappa, beta, nbr8, nbr8_solid, phi_wall=1.0):
     """μ = 2βφ(1-φ)(1-2φ) - κ∇²φ  (Allen-Cahn double-well, F=βφ²(1-φ)²)."""
     mu = 2.0 * beta * phi * (1.0 - phi) * (1.0 - 2.0 * phi) - kappa * _laplacian(phi, nbr8, nbr8_solid, phi_wall)
     return mu
 
 
-def _allen_cahn_step(phi, ux, uy, mu, mobility, nbr8, nbr8_solid, phi_wall=1.0):
-    """Explicit Euler step for Allen-Cahn: ∂φ/∂t + u·∇φ = M ∇²μ."""
+def _allen_cahn_step(phi, ux, uy, mu, mobility, nbr8, nbr8_solid,
+                     phi_wall=1.0, interface_width=4):
+    """Conservative Allen-Cahn step (Chiu & Lin 2011).
+
+    ∂φ/∂t + ∇·(φu) = ∇·[ M·(∇φ - (4/W)·φ(1-φ)·n̂) ]
+
+    Mass-conserving by construction (divergence form) with geometric
+    sharpening counter-term that maintains the interface profile.
+    """
     dphidx, dphidy = _grad(phi, nbr8, nbr8_solid, wall_value=phi_wall)
-    advection = ux * dphidx + uy * dphidy
-    # mu wall_value=0: at phi=1 (solid) the double-well gives mu≈0
-    diffusion = mobility * _laplacian(mu, nbr8, nbr8_solid, wall_value=0.0)
-    phi_new = phi - advection + diffusion
+    grad_mag = jnp.sqrt(dphidx**2 + dphidy**2 + 1e-30)
+    nx = dphidx / grad_mag
+    ny = dphidy / grad_mag
+
+    # Conservative advection: ∇·(φu)
+    adv = _divergence(phi * ux, phi * uy, nbr8, nbr8_solid)
+
+    # Conservative diffusion with sharpening counter-term:
+    # flux J = M·(∇φ - (4/W)·φ(1-φ)·n̂)
+    W = float(interface_width)
+    sharpen = 4.0 * phi * (1.0 - phi) / W
+    Jx = mobility * (dphidx - sharpen * nx)
+    Jy = mobility * (dphidy - sharpen * ny)
+    diff = _divergence(Jx, Jy, nbr8, nbr8_solid)
+
+    phi_new = phi - adv + diff
     return jnp.clip(phi_new, 0.0, 1.0)
 
 
@@ -739,7 +773,8 @@ class TwoPhaseSim:
         mu = _chemical_potential(phi, kappa_loc, beta_loc,
                                  self.nbr8, self.nbr8_solid, self.phi_wall)
         phi = _allen_cahn_step(phi, ux_c, uy_c, mu, u.mobility,
-                               self.nbr8, self.nbr8_solid, self.phi_wall)
+                               self.nbr8, self.nbr8_solid, self.phi_wall,
+                               interface_width=u.interface_width)
 
         # 14. Phase-field BCs
         phi = _apply_phi_bc(
