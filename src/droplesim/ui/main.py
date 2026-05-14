@@ -20,7 +20,10 @@ from PySide6.QtWidgets import (
 )
 
 from droplesim.solver.geometry2d import (
+    BCSpec,
     EdgeSpec,
+    Geometry2D,
+    assign_bcs,
     assign_edge_bcs,
     build_sparse_maps,
     extract_edges,
@@ -89,7 +92,7 @@ class MainWindow(QMainWindow):
         stage_row.setSpacing(1)
 
         self._stage_btns = []
-        stage_labels = ["1. Geometry", "2. Edges", "3. Phase", "4. Simulate"]
+        stage_labels = ["1. Geometry", "2. Phase", "3. BCs", "4. Simulate"]
         for i, label in enumerate(stage_labels):
             btn = ui.stage_button(label)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -111,17 +114,17 @@ class MainWindow(QMainWindow):
             collapsible=(False, False),
         )
 
-        # Views
+        # Views — order: Geometry, Phase, BCs, Simulate
         self._geometry_view = GeometryView()
         self._stack.addWidget(self._geometry_view)
-
-        self._edge_view = EdgeView()
-        self._edge_view.edges_changed.connect(self._on_edges_changed)
-        self._stack.addWidget(self._edge_view)
 
         self._phase_view = PhaseView()
         self._phase_view.phase_changed.connect(self._on_phase_changed)
         self._stack.addWidget(self._phase_view)
+
+        self._edge_view = EdgeView()
+        self._edge_view.edges_changed.connect(self._on_edges_changed)
+        self._stack.addWidget(self._edge_view)
 
         self._sim_view = SimView()
         self._sim_view.start_requested.connect(self._on_start)
@@ -217,15 +220,15 @@ class MainWindow(QMainWindow):
 
     def _on_edges_changed(self):
         n_bc = sum(1 for e in self._edge_view.get_edges() if e["kind"] != "wall")
-        log.info("Edges updated: %d BC edges", n_bc)
+        n_areas = len(self._edge_view.get_areas())
+        log.info("BCs updated: %d edge BCs, %d area BCs", n_bc, n_areas)
 
     def _on_phase_changed(self):
         n = len(self._phase_view.get_regions())
         log.info("Phase regions updated: %d regions", n)
 
     def _build_geometry(self):
-        from droplesim.solver.geometry2d import BCSpec, Geometry2D
-
+        # 1) Edge-based BCs (click-on-edge)
         edges_data = self._edge_view.get_edges()
         edge_specs = []
         for e in edges_data:
@@ -264,6 +267,33 @@ class MainWindow(QMainWindow):
             )
             bs.type_id = es.type_id
             bc_specs.append(bs)
+
+        # 2) Area-based BCs (drag-rectangle) — applied on top, wins on overlap
+        areas_data = self._edge_view.get_areas()
+        if areas_data:
+            area_bc_specs = []
+            for a in areas_data:
+                area_bc_specs.append(BCSpec(
+                    name=a["name"],
+                    kind=a["kind"],
+                    x1_um=a["x1_um"],
+                    y1_um=a["y1_um"],
+                    x2_um=a["x2_um"],
+                    y2_um=a["y2_um"],
+                    phi=a.get("phi", 1.0),
+                    ux=a.get("ux", 0.0),
+                    uy=a.get("uy", 0.0),
+                    outlet_bc=a.get("outlet_bc", "pressure"),
+                    rho_target=a.get("rho_target", 1.0),
+                ))
+            # assign_bcs overwrites bc_map in-place for area regions
+            bc_map, area_bc_specs = assign_bcs(
+                self._solid_mask, area_bc_specs, self._dx_um, self._origin_um,
+                bc_map=bc_map,
+                inlet_counter=max((s.type_id for s in bc_specs if s.kind == "inlet"),
+                                  default=0) + 1,
+            )
+            bc_specs.extend(area_bc_specs)
 
         sparse = build_sparse_maps(self._solid_mask, bc_map)
 
@@ -551,6 +581,7 @@ class MainWindow(QMainWindow):
             dx_um=self._params.dx_um,
             edges=serialized_edges,
             phase_regions=self._phase_view.get_regions(),
+            bc_areas=self._edge_view.get_areas(),
             physics=self._params.physics_dict(),
             simulation=self._params.simulation_dict(),
         )
@@ -572,6 +603,8 @@ class MainWindow(QMainWindow):
                 self._on_load_geometry(state.dxf_path, state.dx_um)
                 if state.edges:
                     self._edge_view.set_edges_from_state(state.edges)
+                if state.bc_areas:
+                    self._edge_view.set_areas_from_state(state.bc_areas)
                 if state.phase_regions:
                     self._phase_view.set_regions_from_state(state.phase_regions)
 

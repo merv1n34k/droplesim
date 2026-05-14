@@ -50,6 +50,7 @@ class SessionState:
     dx_um: float = 2.5
     edges: list[dict] = field(default_factory=list)
     phase_regions: list[dict] = field(default_factory=list)
+    bc_areas: list[dict] = field(default_factory=list)
     physics: dict = field(default_factory=_default_physics)
     simulation: dict = field(default_factory=lambda: {
         "tau_c": 0.55,
@@ -73,6 +74,7 @@ class SessionState:
             },
             "edges": self.edges,
             "phase_regions": self.phase_regions,
+            "bc_areas": self.bc_areas,
             "physics": self.physics,
             "simulation": self.simulation,
         }
@@ -89,6 +91,7 @@ class SessionState:
             dx_um=geom.get("dx_um", 2.5),
             edges=data.get("edges", []),
             phase_regions=data.get("phase_regions", []),
+            bc_areas=data.get("bc_areas", []),
             physics=physics,
             simulation=_migrate_simulation(data.get("simulation", {})),
             timestamp=data.get("timestamp", ""),

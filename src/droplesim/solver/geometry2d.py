@@ -404,12 +404,16 @@ def assign_bcs(
     specs: list[BCSpec],
     dx_um: float,
     origin_um: tuple[float, float],
+    bc_map: np.ndarray | None = None,
+    inlet_counter: int = 1,
 ) -> tuple[np.ndarray, list[BCSpec]]:
     """
     Mark fluid nodes inside each spec's box.
 
-    Inlets get sequential type_ids 1, 2, 3, …
+    Inlets get sequential type_ids starting from *inlet_counter*.
     Outlets get type_id = BC_OUTLET (254).
+    If *bc_map* is provided it is modified in-place (area BCs layer on
+    top of edge BCs); otherwise a fresh zero map is created.
     Returns (bc_map, specs_with_ids_filled).
     """
     ny, nx = solid_mask.shape
@@ -419,8 +423,8 @@ def assign_bcs(
     ys = oy + (np.arange(ny) + 0.5) * dx_um
     XX, YY = np.meshgrid(xs, ys)   # (ny, nx)
 
-    bc_map = np.zeros((ny, nx), dtype=np.uint8)
-    inlet_counter = 1
+    if bc_map is None:
+        bc_map = np.zeros((ny, nx), dtype=np.uint8)
 
     for spec in specs:
         inside = (
