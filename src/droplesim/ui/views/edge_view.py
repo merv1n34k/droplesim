@@ -162,6 +162,7 @@ class EdgeView(QWidget):
         self._origin_um = (0.0, 0.0)
         self._solid_mask = None
         self._channel_depth_um = 100.0
+        self._v_max = 1.0
 
     def set_channel_depth(self, depth_um: float):
         self._channel_depth_um = depth_um
@@ -206,7 +207,25 @@ class EdgeView(QWidget):
 
     # ── Drawing ─────────────────────────────────────────────────────────
 
+    def _max_velocity(self) -> float:
+        vels = []
+        for e in self._edges:
+            if e["kind"] == "inlet" and e.get("flow_rate", 0) > 0:
+                vels.append((e.get("ux", 0.0) ** 2 + e.get("uy", 0.0) ** 2) ** 0.5)
+        for a in self._areas:
+            if a["kind"] == "inlet" and a.get("flow_rate", 0) > 0:
+                vels.append((a.get("ux", 0.0) ** 2 + a.get("uy", 0.0) ** 2) ** 0.5)
+        return max(vels) if vels else 1.0
+
+    def _arrow_scale(self, ux: float, uy: float, v_max: float) -> float:
+        """Return 0..1 scale factor for arrow size based on velocity magnitude."""
+        v = (ux ** 2 + uy ** 2) ** 0.5
+        if v_max <= 0:
+            return 1.0
+        return max(0.3, v / v_max)
+
     def _redraw_all(self):
+        self._v_max = self._max_velocity()
         self._redraw_edges()
         self._redraw_areas()
 
@@ -233,16 +252,17 @@ class EdgeView(QWidget):
                 p0 = np.array(pts[0])
                 p1 = np.array(pts[-1])
                 mid = (p0 + p1) / 2
-                arrow_len = 10 * self._dx_um
+                s = self._arrow_scale(edge.get("ux", 0), edge.get("uy", 0), self._v_max)
+                arrow_len = (5 + 15 * s) * self._dx_um
                 tip = mid + np.array(ndir) * arrow_len
                 angle = np.degrees(np.arctan2(ndir[1], ndir[0]))
                 arrow = pg.ArrowItem(
                     pos=(tip[0], tip[1]),
                     angle=angle,
-                    headLen=8,
-                    headWidth=6,
+                    headLen=4 + 8 * s,
+                    headWidth=3 + 6 * s,
                     tailLen=arrow_len * 0.6,
-                    tailWidth=2,
+                    tailWidth=1 + 2 * s,
                     pen=pg.mkPen(color=(52, 152, 219, 200), width=1),
                     brush=(52, 152, 219, 180),
                 )
@@ -295,18 +315,18 @@ class EdgeView(QWidget):
             mid_x = (area["x1_um"] + area["x2_um"]) / 2
             mid_y = (area["y1_um"] + area["y2_um"]) / 2
             flow_angle = math.radians(area.get("flow_angle_deg", 0.0))
-            arrow_len = 10 * self._dx_um
+            s = self._arrow_scale(area.get("ux", 0), area.get("uy", 0), self._v_max)
+            arrow_len = (5 + 15 * s) * self._dx_um
             tip_x = mid_x + math.cos(flow_angle) * arrow_len
             tip_y = mid_y + math.sin(flow_angle) * arrow_len
-            # pyqtgraph ArrowItem angle: 0° = pointing left, measured CCW
             pg_angle = np.degrees(np.arctan2(math.sin(flow_angle), math.cos(flow_angle)))
             arrow = pg.ArrowItem(
                 pos=(tip_x, tip_y),
                 angle=pg_angle,
-                headLen=8,
-                headWidth=6,
+                headLen=4 + 8 * s,
+                headWidth=3 + 6 * s,
                 tailLen=arrow_len * 0.6,
-                tailWidth=2,
+                tailWidth=1 + 2 * s,
                 pen=pg.mkPen(color=(52, 152, 219, 200), width=1),
                 brush=(52, 152, 219, 180),
             )
