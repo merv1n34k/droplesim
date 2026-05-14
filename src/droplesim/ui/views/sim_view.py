@@ -188,7 +188,7 @@ class SimView(QWidget):
         self._relayout_grid()
 
     def _relayout_grid(self):
-        """Redistribute visible plots into a grid.
+        """Redistribute visible plots into an equal-size grid.
 
         1-2 → 1 row;  3-4 → 2 rows, 2 cols;  5 → 2 rows, 3 cols.
         """
@@ -196,6 +196,12 @@ class SimView(QWidget):
             self._grid.removeWidget(f)
             f.setParent(None)
             f.setVisible(False)
+
+        # Clear old stretch factors
+        for i in range(self._grid.rowCount()):
+            self._grid.setRowStretch(i, 0)
+        for i in range(self._grid.columnCount()):
+            self._grid.setColumnStretch(i, 0)
 
         visible = [
             f for f, chk in zip(self._fields, self._chk_for_field)
@@ -212,9 +218,16 @@ class SimView(QWidget):
         else:
             cols = 3
 
+        rows = (n + cols - 1) // cols
+
         for i, f in enumerate(visible):
             f.setVisible(True)
             self._grid.addWidget(f, i // cols, i % cols)
+
+        for r in range(rows):
+            self._grid.setRowStretch(r, 1)
+        for c in range(cols):
+            self._grid.setColumnStretch(c, 1)
 
     def set_geometry_info(
         self,
