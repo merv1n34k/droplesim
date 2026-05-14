@@ -238,8 +238,7 @@ class MainWindow(QMainWindow):
                     kind=e["kind"],
                     points_um=e["points_um"],
                     phi=e.get("phi", 1.0),
-                    ux=e.get("ux", 0.0),
-                    uy=e.get("uy", 0.0),
+                    pressure_mbar=e.get("pressure_mbar", 0.0),
                     outlet_bc=e.get("outlet_bc", "pressure"),
                     rho_target=e.get("rho_target", 1.0),
                 )
@@ -260,8 +259,7 @@ class MainWindow(QMainWindow):
                 x1_um=x1, y1_um=y1,
                 x2_um=x2, y2_um=y2,
                 phi=es.phi,
-                ux=es.ux,
-                uy=es.uy,
+                pressure_mbar=es.pressure_mbar,
                 outlet_bc=es.outlet_bc,
                 rho_target=es.rho_target,
             )
@@ -281,8 +279,7 @@ class MainWindow(QMainWindow):
                     x2_um=a["x2_um"],
                     y2_um=a["y2_um"],
                     phi=a.get("phi", 1.0),
-                    ux=a.get("ux", 0.0),
-                    uy=a.get("uy", 0.0),
+                    pressure_mbar=a.get("pressure_mbar", 0.0),
                     outlet_bc=a.get("outlet_bc", "pressure"),
                     rho_target=a.get("rho_target", 1.0),
                 ))
@@ -562,12 +559,8 @@ class MainWindow(QMainWindow):
                 "name": e["name"],
                 "kind": e["kind"],
                 "phi": e.get("phi", 1.0),
-                "ux": e.get("ux", 0.0),
-                "uy": e.get("uy", 0.0),
-                "flow_rate": e.get("flow_rate", 0.0),
+                "pressure_mbar": e.get("pressure_mbar", 0.0),
             }
-            if e.get("normal_flipped", False):
-                se["normal_flipped"] = True
             if e.get("contact_angle_deg") is not None:
                 se["contact_angle_deg"] = e["contact_angle_deg"]
             outlet_bc = e.get("outlet_bc", "pressure")

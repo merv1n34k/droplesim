@@ -39,8 +39,7 @@ class EdgeSpec:
     kind: Literal["wall", "inlet", "outlet"]
     points_um: list[tuple[float, float]]
     phi: float = 1.0
-    ux: float = 0.0
-    uy: float = 0.0
+    pressure_mbar: float = 0.0  # inlet gauge pressure [mbar]
     outlet_bc: str = "pressure"  # "neumann" or "pressure"
     rho_target: float = 1.0
     type_id: int = field(default=0, init=False)
@@ -56,10 +55,8 @@ class BCSpec:
     x2_um: float
     y2_um: float
     # inlet-only
-    phi: float = 1.0    # phase value: 1.0 = oil, 0.0 = aqueous
-    ux: float = 0.0     # prescribed velocity x  [m/s] – converted to LU by sim
-    uy: float = 0.0     # prescribed velocity y  [m/s]
-    uz: float = 0.0     # prescribed velocity z  [m/s] (3-D)
+    phi: float = 1.0            # phase value: 1.0 = oil, 0.0 = aqueous
+    pressure_mbar: float = 0.0  # inlet gauge pressure [mbar]
     # outlet-only
     outlet_bc: str = "pressure"  # "neumann" or "pressure"
     rho_target: float = 1.0      # target density for pressure outlet BC

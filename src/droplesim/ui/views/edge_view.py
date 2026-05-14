@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import math
 
 import dropletui as ui
 import numpy as np
@@ -162,7 +161,7 @@ class EdgeView(QWidget):
         self._origin_um = (0.0, 0.0)
         self._solid_mask = None
         self._channel_depth_um = 100.0
-        self._v_max = 1.0
+        self._p_max = 1.0
 
     def set_channel_depth(self, depth_um: float):
         self._channel_depth_um = depth_um
@@ -192,9 +191,7 @@ class EdgeView(QWidget):
                 "kind": "wall",
                 "points_um": pts_um,
                 "phi": 1.0,
-                "ux": 0.0,
-                "uy": 0.0,
-                "flow_rate": 0.0,
+                "pressure_mbar": 0.0,
             })
 
         self._areas = []
@@ -207,25 +204,24 @@ class EdgeView(QWidget):
 
     # ── Drawing ─────────────────────────────────────────────────────────
 
-    def _max_velocity(self) -> float:
-        vels = []
+    def _max_pressure(self) -> float:
+        pressures = []
         for e in self._edges:
-            if e["kind"] == "inlet" and e.get("flow_rate", 0) > 0:
-                vels.append((e.get("ux", 0.0) ** 2 + e.get("uy", 0.0) ** 2) ** 0.5)
+            if e["kind"] == "inlet" and e.get("pressure_mbar", 0) > 0:
+                pressures.append(e["pressure_mbar"])
         for a in self._areas:
-            if a["kind"] == "inlet" and a.get("flow_rate", 0) > 0:
-                vels.append((a.get("ux", 0.0) ** 2 + a.get("uy", 0.0) ** 2) ** 0.5)
-        return max(vels) if vels else 1.0
+            if a["kind"] == "inlet" and a.get("pressure_mbar", 0) > 0:
+                pressures.append(a["pressure_mbar"])
+        return max(pressures) if pressures else 1.0
 
-    def _arrow_scale(self, ux: float, uy: float, v_max: float) -> float:
-        """Return 0..1 scale factor for arrow size based on velocity magnitude."""
-        v = (ux ** 2 + uy ** 2) ** 0.5
-        if v_max <= 0:
+    def _arrow_scale(self, pressure_mbar: float, p_max: float) -> float:
+        """Return 0..1 scale factor for arrow size based on pressure."""
+        if p_max <= 0:
             return 1.0
-        return max(0.3, v / v_max)
+        return max(0.3, pressure_mbar / p_max)
 
     def _redraw_all(self):
-        self._v_max = self._max_velocity()
+        self._p_max = self._max_pressure()
         self._redraw_edges()
         self._redraw_areas()
 
@@ -247,14 +243,13 @@ class EdgeView(QWidget):
             curve = self._plot.plot(xs, ys, pen=pg.mkPen(color=color, width=width))
             self._edge_curves.append(curve)
 
-            if edge["kind"] == "inlet" and edge.get("flow_rate", 0) > 0:
+            if edge["kind"] == "inlet" and edge.get("pressure_mbar", 0) > 0:
                 ndir = self._edge_normal_dir(i)
                 p0 = np.array(pts[0])
                 p1 = np.array(pts[-1])
                 mid = (p0 + p1) / 2
-                s = self._arrow_scale(edge.get("ux", 0), edge.get("uy", 0), self._v_max)
+                s = self._arrow_scale(edge["pressure_mbar"], self._p_max)
                 arrow_len = (5 + 15 * s) * self._dx_um
-                # Offset arrow base away from the edge so it doesn't sit on top
                 base = mid + np.array(ndir) * 5 * self._dx_um
                 tip = base + np.array(ndir) * arrow_len
                 angle = np.degrees(np.arctan2(ndir[1], ndir[0]))
@@ -312,66 +307,20 @@ class EdgeView(QWidget):
         self._plot.addItem(img)
         self._area_items.append(img)
 
-        # Draw flow arrow for inlet areas with flow_rate > 0
-        if area["kind"] == "inlet" and area.get("flow_rate", 0) > 0:
+        # Pressure label for inlet areas
+        if area["kind"] == "inlet" and area.get("pressure_mbar", 0) > 0:
             mid_x = (area["x1_um"] + area["x2_um"]) / 2
             mid_y = (area["y1_um"] + area["y2_um"]) / 2
-            flow_angle = math.radians(area.get("flow_angle_deg", 0.0))
-            s = self._arrow_scale(area.get("ux", 0), area.get("uy", 0), self._v_max)
-            arrow_len = (5 + 15 * s) * self._dx_um
-            tip_x = mid_x + math.cos(flow_angle) * arrow_len
-            tip_y = mid_y + math.sin(flow_angle) * arrow_len
-            pg_angle = np.degrees(np.arctan2(math.sin(flow_angle), math.cos(flow_angle)))
-            arrow = pg.ArrowItem(
-                pos=(tip_x, tip_y),
-                angle=pg_angle,
-                headLen=4 + 8 * s,
-                headWidth=3 + 6 * s,
-                tailLen=arrow_len * 0.6,
-                tailWidth=1 + 2 * s,
-                pen=pg.mkPen(color=(52, 152, 219, 200), width=1),
-                brush=(52, 152, 219, 180),
+            label = pg.TextItem(
+                f"{area['pressure_mbar']:.0f} mbar",
+                color=(52, 152, 219, 220),
+                anchor=(0.5, 0.5),
             )
-            self._plot.addItem(arrow)
-            self._area_arrow_items.append(arrow)
+            label.setPos(mid_x, mid_y)
+            self._plot.addItem(label)
+            self._area_arrow_items.append(label)
         else:
             self._area_arrow_items.append(None)
-
-    # ── Channel width measurement ─────────────────────────────────────
-
-    def _measure_channel_width(self, cx_um: float, cy_um: float, angle_deg: float) -> float:
-        """Scan perpendicular to flow through (cx, cy), return contiguous fluid width."""
-        solid = self._solid_mask
-        if solid is None:
-            return 0.0
-        dx = self._dx_um
-        ox, oy = self._origin_um
-        ny, nx = solid.shape
-
-        angle_rad = math.radians(angle_deg)
-        # Perpendicular direction (90° CCW from flow)
-        px_dir = -math.sin(angle_rad)
-        py_dir = math.cos(angle_rad)
-
-        # Walk from center outward in +perp then -perp, stop at solid/OOB
-        total = 0
-        for sign in (+1, -1):
-            for step in range(0 if sign == +1 else 1, max(nx, ny)):
-                x = cx_um + sign * px_dir * step * dx
-                y = cy_um + sign * py_dir * step * dx
-                ix = int((x - ox) / dx)
-                iy = int((y - oy) / dx)
-                if not (0 <= ix < nx and 0 <= iy < ny) or solid[iy, ix]:
-                    break
-                total += 1
-
-        return total * dx
-
-    def _make_cs_width_fn(self, x1, y1, x2, y2):
-        """Return a callable angle_deg → channel width (µm) for the area center."""
-        cx = (x1 + x2) / 2
-        cy = (y1 + y2) / 2
-        return lambda angle_deg: self._measure_channel_width(cx, cy, angle_deg)
 
     # ── Click → edge dialog ─────────────────────────────────────────────
 
@@ -435,8 +384,6 @@ class EdgeView(QWidget):
             is_fluid = (0 <= iy < h and 0 <= ix < w and not self._solid_mask[iy, ix])
             if not is_fluid:
                 nx, ny = -nx, -ny
-        if self._edges[idx].get("normal_flipped", False):
-            nx, ny = -nx, -ny
         return (nx, ny)
 
     def _show_edge_dialog(self, idx: int):
@@ -447,47 +394,24 @@ class EdgeView(QWidget):
             name=edge.get("name", ""),
             kind=edge.get("kind", "wall"),
             phi=edge.get("phi", 1.0),
-            flow_rate=edge.get("flow_rate", 0.0),
+            pressure_mbar=edge.get("pressure_mbar", 0.0),
             edge_width_um=width_um,
             channel_depth_um=self._channel_depth_um,
             contact_angle_deg=edge.get("contact_angle_deg"),
             outlet_bc=edge.get("outlet_bc", "pressure"),
             rho_target=edge.get("rho_target", 1.0),
-            normal_flipped=edge.get("normal_flipped", False),
         )
         if dlg.exec():
             data = dlg.result_data()
             edge["name"] = data["name"]
             edge["kind"] = data["kind"]
             edge["phi"] = data.get("phi", 1.0)
-            edge["flow_rate"] = data.get("flow_rate", 0.0)
+            edge["pressure_mbar"] = data.get("pressure_mbar", 0.0)
             edge["contact_angle_deg"] = data.get("contact_angle_deg")
             edge["outlet_bc"] = data.get("outlet_bc", "pressure")
             edge["rho_target"] = data.get("rho_target", 1.0)
-            edge["normal_flipped"] = data.get("normal_flipped", False)
 
-            if data.get("flow_rate", 0) > 0 and data["kind"] == "inlet":
-                Q_m3s = data["flow_rate"] * 1e-9 / 60.0
-                width_m = width_um * 1e-6
-                depth_m = self._channel_depth_um * 1e-6
-                area = width_m * depth_m
-                if area > 0:
-                    u_ms = Q_m3s / area
-                    ndir = self._edge_normal_dir(idx)
-                    edge["ux"] = u_ms * ndir[0]
-                    edge["uy"] = u_ms * ndir[1]
-                    flipped = edge.get("normal_flipped", False)
-                    log.info(
-                        "Edge '%s': Q=%.2f µL/min -> u=%.4e m/s, normal=(%.3f,%.3f), "
-                        "ux=%.4e uy=%.4e, flipped=%s",
-                        data["name"], data["flow_rate"], u_ms,
-                        ndir[0], ndir[1], edge["ux"], edge["uy"], flipped,
-                    )
-            else:
-                edge["ux"] = 0.0
-                edge["uy"] = 0.0
-
-            self._redraw_edges()
+            self._redraw_all()
             self._panel.set_edges(self._edges)
             self.edges_changed.emit()
 
@@ -499,10 +423,8 @@ class EdgeView(QWidget):
         if 0 <= idx < len(self._edges):
             self._edges[idx]["kind"] = "wall"
             self._edges[idx]["name"] = f"edge_{idx}"
-            self._edges[idx]["flow_rate"] = 0.0
-            self._edges[idx]["ux"] = 0.0
-            self._edges[idx]["uy"] = 0.0
-            self._redraw_edges()
+            self._edges[idx]["pressure_mbar"] = 0.0
+            self._redraw_all()
             self._panel.set_edges(self._edges)
             self.edges_changed.emit()
 
@@ -519,8 +441,6 @@ class EdgeView(QWidget):
             name=f"area_{self._area_counter}",
             dx_um=dx_um,
             dy_um=dy_um,
-            channel_depth_um=self._channel_depth_um,
-            cs_width_fn=self._make_cs_width_fn(x1, y1, x2, y2),
         )
         if dlg.exec():
             data = dlg.result_data()
@@ -532,15 +452,12 @@ class EdgeView(QWidget):
                 "x2_um": x2,
                 "y2_um": y2,
                 "phi": data.get("phi", 1.0),
-                "flow_rate": data.get("flow_rate", 0.0),
-                "flow_angle_deg": data.get("flow_angle_deg", 0.0),
-                "ux": data.get("ux", 0.0),
-                "uy": data.get("uy", 0.0),
+                "pressure_mbar": data.get("pressure_mbar", 0.0),
                 "outlet_bc": data.get("outlet_bc", "pressure"),
                 "rho_target": data.get("rho_target", 1.0),
             }
             self._areas.append(area)
-            self._add_area_overlay(area)
+            self._redraw_all()
             self._panel.set_areas(self._areas)
             self.edges_changed.emit()
             log.info("Area BC added: %s (%s)", area["name"], area["kind"])
@@ -556,29 +473,21 @@ class EdgeView(QWidget):
             name=area["name"],
             kind=area["kind"],
             phi=area.get("phi", 1.0),
-            flow_rate=area.get("flow_rate", 0.0),
-            flow_angle_deg=area.get("flow_angle_deg", 0.0),
+            pressure_mbar=area.get("pressure_mbar", 0.0),
             outlet_bc=area.get("outlet_bc", "pressure"),
             rho_target=area.get("rho_target", 1.0),
             dx_um=dx_um,
             dy_um=dy_um,
-            channel_depth_um=self._channel_depth_um,
-            cs_width_fn=self._make_cs_width_fn(
-                area["x1_um"], area["y1_um"], area["x2_um"], area["y2_um"],
-            ),
         )
         if dlg.exec():
             data = dlg.result_data()
             area["name"] = data["name"]
             area["kind"] = data["kind"]
             area["phi"] = data.get("phi", 1.0)
-            area["flow_rate"] = data.get("flow_rate", 0.0)
-            area["flow_angle_deg"] = data.get("flow_angle_deg", 0.0)
-            area["ux"] = data.get("ux", 0.0)
-            area["uy"] = data.get("uy", 0.0)
+            area["pressure_mbar"] = data.get("pressure_mbar", 0.0)
             area["outlet_bc"] = data.get("outlet_bc", "pressure")
             area["rho_target"] = data.get("rho_target", 1.0)
-            self._redraw_areas()
+            self._redraw_all()
             self._panel.set_areas(self._areas)
             self.edges_changed.emit()
 
@@ -606,48 +515,11 @@ class EdgeView(QWidget):
             for i, e in enumerate(edges):
                 self._edges[i].update(e)
                 self._edges[i]["points_um"] = self._edge_polylines_um[i]
-                if e.get("kind") == "inlet" and e.get("flow_rate", 0) > 0:
-                    width_um = self._edge_width_um(i)
-                    Q_m3s = e["flow_rate"] * 1e-9 / 60.0
-                    width_m = width_um * 1e-6
-                    depth_m = self._channel_depth_um * 1e-6
-                    area = width_m * depth_m
-                    if area > 0:
-                        u_ms = Q_m3s / area
-                        ndir = self._edge_normal_dir(i)
-                        self._edges[i]["ux"] = u_ms * ndir[0]
-                        self._edges[i]["uy"] = u_ms * ndir[1]
-                        flipped = self._edges[i].get("normal_flipped", False)
-                        log.info(
-                            "Edge '%s' (load): normal=(%.3f,%.3f), ux=%.4e uy=%.4e, flipped=%s",
-                            e.get("name", f"edge_{i}"),
-                            ndir[0], ndir[1],
-                            self._edges[i]["ux"], self._edges[i]["uy"], flipped,
-                        )
-        self._redraw_edges()
+        self._redraw_all()
         self._panel.set_edges(self._edges)
 
     def set_areas_from_state(self, areas: list[dict]):
-        for item in self._area_items:
-            self._plot.removeItem(item)
-        self._area_items.clear()
-        self._areas = []
-        for a in areas:
-            area = dict(a)
-            if area.get("kind") == "inlet" and area.get("flow_rate", 0) > 0:
-                flow_angle = area.get("flow_angle_deg", 0.0)
-                cx = (area["x1_um"] + area["x2_um"]) / 2
-                cy = (area["y1_um"] + area["y2_um"]) / 2
-                cs_width = self._measure_channel_width(cx, cy, flow_angle)
-                if cs_width > 0 and self._channel_depth_um > 0:
-                    angle_rad = math.radians(flow_angle)
-                    Q_m3s = area["flow_rate"] * 1e-9 / 60.0
-                    w_m = cs_width * 1e-6
-                    d_m = self._channel_depth_um * 1e-6
-                    u_ms = Q_m3s / (w_m * d_m)
-                    area["ux"] = u_ms * math.cos(angle_rad)
-                    area["uy"] = u_ms * math.sin(angle_rad)
-            self._areas.append(area)
-            self._add_area_overlay(area)
+        self._areas = [dict(a) for a in areas]
         self._area_counter = len(self._areas)
+        self._redraw_all()
         self._panel.set_areas(self._areas)

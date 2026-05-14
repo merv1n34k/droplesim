@@ -430,7 +430,7 @@ def _marangoni_force(phi, sigma_local, nbr8, nbr8_solid, phi_wall=1.0):
 def _apply_surfactant_bc(psi, C, bc_map_fluid, inlet_data, outlet_mask, outlet_upstream,
                          C_inlet=0.0):
     """Surfactant BCs: inlet C=C_inlet, ψ=0; outlet: Neumann."""
-    for type_id, _phi_val, _ux_lu, _uy_lu in inlet_data:
+    for type_id, _phi_val, _rho_in in inlet_data:
         mask = (bc_map_fluid == type_id)
         psi = jnp.where(mask, 0.0, psi)
         C = jnp.where(mask, C_inlet, C)
@@ -517,7 +517,7 @@ def _polymer_stress_force(A_xx, A_xy, A_yy, phi, mu_p_lu, lambda_p_lu,
 def _apply_conformation_bc(A_xx, A_xy, A_yy, bc_map_fluid, inlet_data,
                            outlet_mask, outlet_upstream):
     """Conformation BCs: inlet A=I; outlet: Neumann."""
-    for type_id, _phi_val, _ux_lu, _uy_lu in inlet_data:
+    for type_id, _phi_val, _rho_in in inlet_data:
         mask = (bc_map_fluid == type_id)
         A_xx = jnp.where(mask, 1.0, A_xx)
         A_xy = jnp.where(mask, 0.0, A_xy)
@@ -534,14 +534,20 @@ def _apply_conformation_bc(A_xx, A_xy, A_yy, bc_map_fluid, inlet_data,
 
 def _apply_f_bc(f, bc_map_fluid, inlet_data, outlet_mask, outlet_upstream,
                 outlet_pressure=False, rho_target=1.0):
-    """Apply inlet equilibrium and outlet BCs to distributions only."""
+    """Apply inlet equilibrium and outlet BCs to distributions only.
+
+    Inlets: pressure-driven — fixed rho (from user pressure), velocity from
+    current flow state.  Mirror of the pressure outlet approach.
+    """
     n = f.shape[1]
 
-    rho_local = f.sum(axis=0)
-    for type_id, _phi_val, ux_lu, uy_lu in inlet_data:
+    # Compute current macroscopic fields once for all inlets
+    rho_cur, ux_cur, uy_cur = _macroscopic(f)
+
+    for type_id, _phi_val, rho_in in inlet_data:
         mask = (bc_map_fluid == type_id)
-        feq = _equilibrium(rho_local, ux_lu * jnp.ones(n, dtype=jnp.float64),
-                           uy_lu * jnp.ones(n, dtype=jnp.float64))
+        rho_bc = jnp.where(mask, rho_in, rho_cur)
+        feq = _equilibrium(rho_bc, ux_cur, uy_cur)
         f = jnp.where(mask[None], feq, f)
 
     if outlet_pressure:
@@ -562,7 +568,7 @@ def _apply_f_bc(f, bc_map_fluid, inlet_data, outlet_mask, outlet_upstream,
 
 def _apply_phi_bc(phi, bc_map_fluid, inlet_data, outlet_mask, outlet_upstream):
     """Enforce phi at inlet/outlet cells. Must be called AFTER Allen-Cahn step."""
-    for type_id, phi_val, _ux_lu, _uy_lu in inlet_data:
+    for type_id, phi_val, _rho_in in inlet_data:
         mask = (bc_map_fluid == type_id)
         phi = jnp.where(mask, phi_val, phi)
 
@@ -607,13 +613,18 @@ class TwoPhaseSim:
         self.outlet_mask = jnp.array(sp.outlet_mask)
         self.outlet_upstream = jnp.array(sp.outlet_upstream)
 
-        # Pre-compute inlet data in LU
+        # Pre-compute inlet data in LU: pressure → rho_lbm
+        # LBM EOS: p = rho * cs^2, cs^2 = 1/3
+        # rho_lbm = 1.0 + 3 * P_gauge_Pa / (rho_phys * (dx/dt)^2)
         self.inlet_data = []
+        dx_m = self.units.dx
+        dt_s = self.units.dt
+        rho_phys = phys.rho_c  # reference physical density
+        lattice_v2 = (dx_m / dt_s) ** 2
         for spec in geometry.inlet_specs():
-            u_scale = self.units.dt / self.units.dx
-            ux_lu = spec.ux * u_scale
-            uy_lu = spec.uy * u_scale
-            self.inlet_data.append((spec.type_id, spec.phi, ux_lu, uy_lu))
+            p_pa = spec.pressure_mbar * 100.0  # mbar → Pa
+            rho_in = 1.0 + 3.0 * p_pa / (rho_phys * lattice_v2)
+            self.inlet_data.append((spec.type_id, spec.phi, rho_in))
 
         # Outlet BC mode (use first outlet spec's settings, default to Neumann)
         outlet_specs = geometry.outlet_specs()

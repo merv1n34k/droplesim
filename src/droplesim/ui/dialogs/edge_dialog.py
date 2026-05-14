@@ -5,7 +5,6 @@ from __future__ import annotations
 import dropletui as ui
 from dropletui.theme import text_qss
 from PySide6.QtWidgets import (
-    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -21,19 +20,16 @@ class EdgeDialog(QDialog):
         name="",
         kind="wall",
         phi=1.0,
-        flow_rate=0.0,
+        pressure_mbar=0.0,
         edge_width_um=0.0,
         channel_depth_um=100.0,
         contact_angle_deg=None,
         outlet_bc="pressure",
         rho_target=1.0,
-        normal_flipped=False,
     ):
         super().__init__(parent)
         self.setWindowTitle("Label Edge")
         self.setMinimumWidth(340)
-        self._edge_width_um = edge_width_um
-        self._channel_depth_um = channel_depth_um
 
         layout = QFormLayout(self)
         layout.setSpacing(8)
@@ -82,25 +78,16 @@ class EdgeDialog(QDialog):
         self._phi.setCurrentIndex(0 if phi < 0.5 else 1)
         inlet_lay.addRow("Phase:", self._phi)
 
-        self._flow_rate = ui.double_box(
+        self._pressure = ui.double_box(
             minimum=0.0,
             maximum=10000.0,
-            value=flow_rate,
-            step=0.1,
-            decimals=3,
+            value=pressure_mbar,
+            step=10.0,
+            decimals=1,
         )
-        self._flow_rate.setSuffix(" µL/min")
-        self._flow_rate.valueChanged.connect(self._on_flow_rate_changed)
-        inlet_lay.addRow("Flow rate:", self._flow_rate)
-
-        self._vel_label = QLabel("—")
-        self._vel_label.setStyleSheet(text_qss("muted"))
-        inlet_lay.addRow("Velocity:", self._vel_label)
-
-        self._flip = QCheckBox("Flip flow direction")
-        self._flip.setChecked(normal_flipped)
-        self._flip.setToolTip("Reverse the auto-detected inward normal")
-        inlet_lay.addRow(self._flip)
+        self._pressure.setSuffix(" mbar")
+        self._pressure.setToolTip("Gauge pressure at inlet (0 = atmospheric)")
+        inlet_lay.addRow("Pressure:", self._pressure)
 
         layout.addRow(self._inlet_widget)
 
@@ -140,7 +127,6 @@ class EdgeDialog(QDialog):
         layout.addRow(buttons)
 
         self._on_kind_changed(self._kind.currentText())
-        self._on_flow_rate_changed(flow_rate)
 
     def _on_kind_changed(self, kind: str):
         self._wall_widget.setVisible(kind == "wall")
@@ -154,18 +140,6 @@ class EdgeDialog(QDialog):
         self._rho_target.setVisible(is_pressure)
         self._rho_target_label.setVisible(is_pressure)
 
-    def _on_flow_rate_changed(self, val: float):
-        if val > 0 and self._edge_width_um > 0 and self._channel_depth_um > 0:
-            Q_m3s = val * 1e-9 / 60.0
-            width_m = self._edge_width_um * 1e-6
-            depth_m = self._channel_depth_um * 1e-6
-            u = Q_m3s / (width_m * depth_m)
-            self._vel_label.setText(f"{u:.4e} m/s")
-            self._vel_label.setStyleSheet(text_qss("primary"))
-        else:
-            self._vel_label.setText("—")
-            self._vel_label.setStyleSheet(text_qss("muted"))
-
     def result_data(self) -> dict:
         kind = self._kind.currentText()
         data = {
@@ -176,14 +150,13 @@ class EdgeDialog(QDialog):
             ca = self._contact_angle_override.value()
             data["contact_angle_deg"] = ca if ca > 0 else None
             data["phi"] = 1.0
-            data["flow_rate"] = 0.0
+            data["pressure_mbar"] = 0.0
         elif kind == "inlet":
             data["phi"] = 0.0 if self._phi.currentIndex() == 0 else 1.0
-            data["flow_rate"] = self._flow_rate.value()
-            data["normal_flipped"] = self._flip.isChecked()
+            data["pressure_mbar"] = self._pressure.value()
         elif kind == "outlet":
             data["phi"] = 1.0
-            data["flow_rate"] = 0.0
+            data["pressure_mbar"] = 0.0
             data["outlet_bc"] = "neumann" if self._outlet_bc.currentIndex() == 0 else "pressure"
             data["rho_target"] = self._rho_target.value()
         return data
