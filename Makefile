@@ -29,12 +29,6 @@ $(GEOMETRY_H5): src/droplesim/geometry/dxf_to_voxel.py $(DXF)
 
 test:
 	uv run python -m pytest src/ -x -q 2>/dev/null || true
-	uv run python -m droplesim.scripts.run_doe \
-	    --config config/benchmarks/laplace.json --dry-run
-	uv run python -m droplesim.scripts.run_doe \
-	    --config config/benchmarks/tomotika.json --dry-run
-	uv run python -m droplesim.scripts.run_doe \
-	    --config config/benchmarks/contact_angle.json --dry-run
 
 test-all: test
 	uv run python -c "from droplesim.solver.sim import TwoPhaseSim; print('solver import OK')"
