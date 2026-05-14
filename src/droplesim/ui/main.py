@@ -28,6 +28,7 @@ from droplesim.solver.geometry2d import (
     rasterize_polygons,
 )
 from droplesim.solver.sim import PhysParams, TwoPhaseSim
+from droplesim.ui.frame_buffer import FrameBuffer, FrameRecord
 from droplesim.ui.panels.params_panel import ParamsPanel
 from droplesim.ui.state import SessionState
 from droplesim.ui.views.edge_view import EdgeView
@@ -55,8 +56,12 @@ class MainWindow(QMainWindow):
         # Resume state: kept between stop→start
         self._current_sim: TwoPhaseSim | None = None
         self._saved_step = 0
-        self._saved_f = None
-        self._saved_phi = None
+        self._saved_state: dict | None = None  # {f, phi, psi, C, A_xx, A_xy, A_yy}
+        self._frame_buffer = FrameBuffer(maxlen=1000)
+        self._replay_timer = QTimer()
+        self._replay_timer.timeout.connect(self._on_replay_tick)
+        self._replay_idx = 0
+        self._is_replaying = False
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -122,6 +127,9 @@ class MainWindow(QMainWindow):
         self._sim_view.start_requested.connect(self._on_start)
         self._sim_view.stop_requested.connect(self._on_stop)
         self._sim_view.reset_requested.connect(self._on_reset)
+        self._sim_view.timeline_scrubbed.connect(self._on_timeline_scrubbed)
+        self._sim_view.play_toggled.connect(self._on_play_toggled)
+        self._sim_view.export_requested.connect(self._on_export)
         self._stack.addWidget(self._sim_view)
 
         # Disable stages 2-4 until geometry is loaded
@@ -276,13 +284,23 @@ class MainWindow(QMainWindow):
         try:
             s = self._params.simulation_dict()
 
-            if self._saved_f is not None and self._current_sim is not None:
+            maxlen = s.get("history_frames", 1000)
+            if self._frame_buffer.maxlen != maxlen:
+                self._frame_buffer = FrameBuffer(maxlen=maxlen)
+
+            if self._saved_state is not None and self._current_sim is not None:
                 # Resume from saved state
                 log.info("Resuming simulation from step %d", self._saved_step)
+                st = self._saved_state
                 self._worker = SimWorker(
                     self._current_sim,
-                    f_resume=self._saved_f,
-                    phi_resume=self._saved_phi,
+                    f_resume=st["f"],
+                    phi_resume=st["phi"],
+                    psi_resume=st.get("psi"),
+                    C_resume=st.get("C"),
+                    A_xx_resume=st.get("A_xx"),
+                    A_xy_resume=st.get("A_xy"),
+                    A_yy_resume=st.get("A_yy"),
                     start_step=self._saved_step,
                     emit_interval=s["emit_interval"],
                 )
@@ -290,6 +308,8 @@ class MainWindow(QMainWindow):
                 # Fresh start
                 geom = self._build_geometry()
                 p = self._params.physics_dict()
+                surf = p.get("surfactant")
+                ve = p.get("viscoelastic")
                 phys = PhysParams(
                     mu_c=p["continuous"]["mu_mPas"] * 1e-3,
                     mu_d=p["disperse"]["mu_mPas"] * 1e-3,
@@ -297,6 +317,16 @@ class MainWindow(QMainWindow):
                     rho_d=p["disperse"]["rho_kg_m3"],
                     sigma=p["interface"]["sigma_mNm"] * 1e-3,
                     contact_angle_deg=p["interface"]["contact_angle_deg"],
+                    D_s=surf["D_s"] if surf else None,
+                    D_bulk=surf["D_bulk"] if surf else None,
+                    psi_inf=surf["psi_inf"] if surf else None,
+                    E0=surf["E0"] if surf else None,
+                    k_a=surf["k_a"] if surf else None,
+                    k_d=surf["k_d"] if surf else None,
+                    C_inlet=surf.get("C_inlet", 0.1) if surf else None,
+                    lambda_p=ve["lambda_p"] if ve else None,
+                    mu_p=ve["mu_p"] if ve else None,
+                    kappa_ve=ve.get("kappa_ve") if ve else None,
                 )
                 sim = TwoPhaseSim(
                     geom, phys,
@@ -347,12 +377,24 @@ class MainWindow(QMainWindow):
                          sim.rho_target)
                 log.info("  n_fluid=%d (%.1f%%)", sp.n_fluid,
                          100.0 * sp.n_fluid / (self._solid_mask.size))
+                if sim.surfactant_enabled:
+                    log.info("  surfactant: D_s_lu=%.3e D_bulk_lu=%.3e psi_inf_lu=%.3e E0=%.3f",
+                             sim.units.D_s_lu, sim.units.D_bulk_lu,
+                             sim.units.psi_inf_lu, sim.units.E0)
+                    log.info("  surfactant: k_a_lu=%.3e k_d_lu=%.3e C_inlet_lu=%.3e",
+                             sim.units.k_a_lu, sim.units.k_d_lu, sim.units.C_inlet_lu)
+                if sim.viscoelastic_enabled:
+                    log.info("  viscoelastic: lambda_p_lu=%.2f mu_p_lu=%.3e beta_visc=%.4f",
+                             sim.units.lambda_p_lu, sim.units.mu_p_lu, sim.units.beta_visc)
+                    log.info("  viscoelastic: tau_d_solvent=%.4f kappa_ve_lu=%.3e",
+                             sim.units.tau_d_solvent, sim.units.kappa_ve_lu)
                 self._worker = SimWorker(
                     sim, phi_init=phi_init, emit_interval=s["emit_interval"],
                 )
 
             self._worker.frame_ready.connect(self._on_frame)
             self._worker.state_saved.connect(self._on_state_saved)
+            self._worker.diverged.connect(self._on_diverged)
             self._worker.finished.connect(self._on_sim_finished)
             self._worker.start()
             self._sim_view.set_running(True)
@@ -368,10 +410,9 @@ class MainWindow(QMainWindow):
             log.info("Stopping simulation")
             self._worker.request_stop()
 
-    def _on_state_saved(self, step, f, phi):
+    def _on_state_saved(self, step, state_dict):
         self._saved_step = step
-        self._saved_f = f
-        self._saved_phi = phi
+        self._saved_state = state_dict
         log.info("Simulation state saved at step %d", step)
 
     def _on_sim_finished(self):
@@ -379,25 +420,109 @@ class MainWindow(QMainWindow):
             self._worker.wait()
             self._worker = None
         self._sim_view.set_running(False)
-        self._sim_view.set_has_saved_state(self._saved_f is not None)
+        self._sim_view.set_has_saved_state(self._saved_state is not None)
+        self._sim_view.set_timeline_state(
+            len(self._frame_buffer), max(0, len(self._frame_buffer) - 1), is_live=False,
+        )
         log.info("Simulation stopped")
         self._set_status("Simulation paused — press Resume to continue", "#888888")
 
     def _on_reset(self):
-        self._saved_f = None
-        self._saved_phi = None
+        self._saved_state = None
         self._saved_step = 0
         self._current_sim = None
         self._sim_view.set_has_saved_state(False)
+        self._replay_timer.stop()
+        self._is_replaying = False
+        self._replay_idx = 0
+        self._frame_buffer.clear()
+        self._sim_view.set_timeline_state(0, 0, is_live=True)
         log.info("Simulation reset")
         self._set_status("Simulation reset", "#888888")
 
-    def _on_frame(self, step, phi, rho, ux, uy, elapsed, mlups):
-        self._sim_view.update_frame(step, phi, rho, ux, uy, elapsed, mlups)
+    def _on_diverged(self, step: int, field: str):
+        log.error("Simulation diverged at step %d (field: %s)", step, field)
+        self._saved_state = None
+        self._saved_step = 0
+        self._current_sim = None
+        self._sim_view.set_has_saved_state(False)
+        self._set_status(
+            f"Simulation diverged at step {step} (NaN/Inf in {field}) — try lower flow rates or higher sigma",
+        )
+        QMessageBox.warning(
+            self, "Simulation Diverged",
+            f"Numerical instability detected at step {step}.\n"
+            f"Field '{field}' contains NaN or Inf values.\n\n"
+            "Try:\n"
+            "  - Lowering inlet flow rates\n"
+            "  - Increasing surface tension (sigma)\n"
+            "  - Reducing tau_c closer to 0.55\n"
+            "  - Increasing emit interval to check earlier",
+        )
+
+    def _on_frame(self, step, phi, rho, ux, uy, elapsed, mlups, extra=None):
+        rec = FrameRecord(
+            step,
+            np.array(phi, dtype=np.float32, copy=True),
+            np.array(rho, dtype=np.float32, copy=True),
+            np.array(ux, dtype=np.float32, copy=True),
+            np.array(uy, dtype=np.float32, copy=True),
+            elapsed,
+            mlups,
+            {k: np.array(v, dtype=np.float32, copy=True) for k, v in extra.items()}
+            if extra
+            else None,
+        )
+        self._frame_buffer.append(rec)
+        self._sim_view.update_frame(step, phi, rho, ux, uy, elapsed, mlups, extra=extra)
+        self._sim_view.set_timeline_state(
+            len(self._frame_buffer), len(self._frame_buffer) - 1, is_live=True,
+        )
         self._set_status(
             f"Step: {step}  |  MLUPS: {mlups:.1f}  |  Elapsed: {elapsed:.1f}s",
             "#27ae60",
         )
+
+    def _on_timeline_scrubbed(self, idx: int):
+        if idx < 0 or idx >= len(self._frame_buffer):
+            return
+        rec = self._frame_buffer[idx]
+        self._sim_view.update_frame(
+            rec.step, rec.phi, rec.rho, rec.ux, rec.uy,
+            rec.elapsed, rec.mlups, extra=rec.extra,
+        )
+        self._sim_view.set_timeline_state(
+            len(self._frame_buffer), idx, is_live=False,
+        )
+        self._replay_idx = idx
+
+    def _on_play_toggled(self, playing: bool):
+        if playing:
+            speed = self._sim_view.playback_speed
+            interval_ms = max(16, int(1000 / (speed * 30)))
+            self._replay_timer.start(interval_ms)
+            self._is_replaying = True
+        else:
+            self._replay_timer.stop()
+            self._is_replaying = False
+
+    def _on_replay_tick(self):
+        if self._replay_idx < len(self._frame_buffer) - 1:
+            self._replay_idx += 1
+            self._on_timeline_scrubbed(self._replay_idx)
+        else:
+            self._replay_timer.stop()
+            self._is_replaying = False
+            self._sim_view.set_play_state(False)
+
+    def _on_export(self):
+        from PySide6.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getSaveFileName(self, "Export HDF5", "", "HDF5 (*.h5)")
+        if path:
+            self._frame_buffer.export_hdf5(path)
+            log.info("Exported %d frames to %s", len(self._frame_buffer), path)
+            self._set_status(f"Exported {len(self._frame_buffer)} frames to {path}")
 
     def _build_session_state(self) -> SessionState:
         edges = self._edge_view.get_edges()
@@ -456,11 +581,13 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._keep_alive.stop()
+        self._replay_timer.stop()
         if self._worker is not None:
             log.info("Shutting down — requesting worker stop")
             try:
                 self._worker.frame_ready.disconnect(self._on_frame)
                 self._worker.state_saved.disconnect(self._on_state_saved)
+                self._worker.diverged.disconnect(self._on_diverged)
                 self._worker.finished.disconnect(self._on_sim_finished)
             except RuntimeError:
                 pass

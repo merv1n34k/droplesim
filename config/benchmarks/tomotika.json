@@ -1,0 +1,43 @@
+{
+  "name": "benchmark_tomotika",
+  "description": "Tomotika jet instability benchmark: cylindrical thread in co-flowing outer fluid. Measure temporal growth rate of sinusoidal perturbation and compare to Tomotika (1935) theory at λ=1.0 and λ=2.4.",
+  "app": "droplet_generator",
+  "benchmark": true,
+  "geometry": {
+    "type": "box",
+    "nx": 256, "ny": 64, "nz": 64,
+    "periodic": [true, false, false]
+  },
+  "initial_condition": {
+    "type": "cylindrical_thread",
+    "axis": "x",
+    "center_yz": [32, 32],
+    "radius_nodes": 12,
+    "perturbation_amplitude": 0.05,
+    "perturbation_wavelength_nodes": 128,
+    "phi_inside": 0.0,
+    "phi_outside": 1.0
+  },
+  "fixed_params": {
+    "sigma": 0.001, "interface_width_dx": 4, "mobility": 0.1,
+    "n_steps": 20000, "measurement_interval": 100,
+    "vtk_interval": 500, "hdf5_interval": 0,
+    "geometry_type": "box", "nx": 256, "ny": 64, "nz": 64
+  },
+  "runs": [
+    {
+      "id": "BM_Tomotika_L1",
+      "note": "λ=1.0 (equal viscosity)",
+      "tau_c": 0.55, "tau_d": 0.55, "viscosity_ratio_lambda": 1.0
+    },
+    {
+      "id": "BM_Tomotika_L24",
+      "note": "λ=2.4 (5% Pluronic representative)",
+      "tau_c": 0.55, "tau_d": 0.7, "viscosity_ratio_lambda": 2.4
+    }
+  ],
+  "success_criteria": {
+    "growth_rate_relative_error_pct": 15.0,
+    "note": "Growth rate ω vs Tomotika (1935) dispersion relation"
+  }
+}

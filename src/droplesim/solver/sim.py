@@ -62,6 +62,18 @@ class PhysParams:
     rho_d: float        # disperse phase density, kg/m³
     sigma: float        # interfacial tension, N/m
     contact_angle_deg: float = 150.0
+    # Surfactant (all None = disabled)
+    D_s: float | None = None        # interfacial diffusivity, m²/s
+    D_bulk: float | None = None     # bulk diffusivity, m²/s
+    psi_inf: float | None = None    # max interfacial concentration, mol/m²
+    E0: float | None = None         # elasticity number (dimensionless)
+    k_a: float | None = None        # adsorption rate, m³/(mol·s)
+    k_d: float | None = None        # desorption rate, 1/s
+    C_inlet: float | None = None    # inlet bulk concentration, mol/m³
+    # Viscoelastic (all None = disabled, disperse phase only)
+    lambda_p: float | None = None   # polymer relaxation time, s
+    mu_p: float | None = None       # polymer viscosity contribution, Pa·s
+    kappa_ve: float | None = None   # artificial diffusion for A_ij stability
 
 
 @dataclass
@@ -76,6 +88,22 @@ class LBMUnits:
     beta: float         # bulk free-energy coefficient
     mobility: float
     interface_width: int  # nodes
+    # Surfactant LU (0.0 when disabled)
+    D_s_lu: float = 0.0
+    D_bulk_lu: float = 0.0
+    psi_inf_lu: float = 0.0
+    E0: float = 0.0
+    k_a_lu: float = 0.0
+    k_d_lu: float = 0.0
+    C_inlet_lu: float = 0.0
+    surfactant_enabled: bool = False
+    # Viscoelastic LU (0.0 when disabled)
+    lambda_p_lu: float = 0.0
+    mu_p_lu: float = 0.0
+    beta_visc: float = 1.0       # solvent fraction mu_s / mu_total
+    kappa_ve_lu: float = 0.0
+    tau_d_solvent: float = 0.0   # τ_d using solvent-only viscosity
+    viscoelastic_enabled: bool = False
 
 
 def convert_units(
@@ -108,6 +136,50 @@ def convert_units(
     kappa_lu = 1.5 * sigma_lbm * W_lu       # 3σW/2
     beta_lu = 12.0 * sigma_lbm / W_lu       # 12σ/W
 
+    # Surfactant unit conversion
+    surf_enabled = phys.D_s is not None and phys.psi_inf is not None
+    D_s_lu = 0.0
+    D_bulk_lu = 0.0
+    psi_inf_lu = 0.0
+    E0 = 0.0
+    k_a_lu = 0.0
+    k_d_lu = 0.0
+    C_inlet_lu = 0.0
+    if surf_enabled:
+        D_s_lu = phys.D_s * dt / dx**2
+        D_bulk_lu = (phys.D_bulk or phys.D_s) * dt / dx**2
+        psi_inf_lu = phys.psi_inf * dx**2
+        E0 = phys.E0 or 0.0
+        if phys.k_a is not None:
+            # k_a [m³/(mol·s)] → LU: k_a * (dt / dx³) * (mol_scale)
+            # With psi_inf_lu = psi_inf * dx², concentration C [mol/m³]:
+            # C_lu = C * dx³, so k_a_lu = k_a * C_lu_scale * dt / psi_lu_scale
+            k_a_lu = phys.k_a * dt / dx
+        if phys.k_d is not None:
+            k_d_lu = phys.k_d * dt
+        if phys.C_inlet is not None:
+            # C [mol/m³] → LU: C * dx³ (concentration per lattice volume)
+            C_inlet_lu = phys.C_inlet * dx**3
+
+    # Viscoelastic unit conversion
+    ve_enabled = phys.lambda_p is not None and phys.mu_p is not None
+    lambda_p_lu = 0.0
+    mu_p_lu = 0.0
+    beta_visc = 1.0
+    kappa_ve_lu = 0.0
+    tau_d_solvent = tau_d
+    if ve_enabled:
+        lambda_p_lu = phys.lambda_p / dt
+        mu_p_lu = phys.mu_p * dt / (phys.rho_d * dx**2)
+        # Solvent fraction: mu_s = mu_d - mu_p
+        mu_s = phys.mu_d - phys.mu_p
+        beta_visc = mu_s / phys.mu_d
+        # Solvent-only tau for disperse phase
+        nu_s = mu_s / phys.rho_d
+        nu_s_lu = nu_s * dt / dx**2
+        tau_d_solvent = 3.0 * nu_s_lu + 0.5
+        kappa_ve_lu = (phys.kappa_ve or 0.0) * dt / dx**2
+
     return LBMUnits(
         tau_c=tau_c,
         tau_d=tau_d,
@@ -119,6 +191,20 @@ def convert_units(
         beta=beta_lu,
         mobility=mobility,
         interface_width=interface_width,
+        D_s_lu=D_s_lu,
+        D_bulk_lu=D_bulk_lu,
+        psi_inf_lu=psi_inf_lu,
+        E0=E0,
+        k_a_lu=k_a_lu,
+        k_d_lu=k_d_lu,
+        C_inlet_lu=C_inlet_lu,
+        surfactant_enabled=surf_enabled,
+        lambda_p_lu=lambda_p_lu,
+        mu_p_lu=mu_p_lu,
+        beta_visc=beta_visc,
+        kappa_ve_lu=kappa_ve_lu,
+        tau_d_solvent=tau_d_solvent,
+        viscoelastic_enabled=ve_enabled,
     )
 
 
@@ -236,6 +322,189 @@ def _surface_tension_force(phi, mu, nbr8, nbr8_solid, phi_wall=1.0):
     return mu * dphidx, mu * dphidy
 
 
+# ── Surfactant transport + Marangoni ───────────────────────────────────────
+
+def _sigma_local(phi, psi, sigma_lbm, E0, psi_inf_lu):
+    """Langmuir equation of state: σ(ψ) = σ₀·[1 + E₀·ln(1 - ψ/ψ_inf)].
+    Returns per-node σ. Active only at interface (|∇φ|>0 region)."""
+    ratio = jnp.clip(psi / psi_inf_lu, 0.0, 0.999)
+    sigma = sigma_lbm * (1.0 + E0 * jnp.log(1.0 - ratio))
+    return jnp.clip(sigma, 0.0, sigma_lbm * 10.0)
+
+
+def _surfactant_step(psi, ux, uy, phi, D_s_lu, nbr8, nbr8_solid, phi_wall=1.0):
+    """Interfacial surfactant transport (FD, explicit Euler).
+    ∂ψ/∂t + u·∇ψ = D_s·∇²ψ + sharpening flux.
+    Sharpening confines ψ to the diffuse interface."""
+    # Advection
+    dpsi_dx, dpsi_dy = _grad(psi, nbr8, nbr8_solid, wall_value=0.0)
+    advection = ux * dpsi_dx + uy * dpsi_dy
+
+    # Diffusion along interface
+    diffusion = D_s_lu * _laplacian(psi, nbr8, nbr8_solid, wall_value=0.0)
+
+    # Sharpening: confine ψ to interface region using |∇φ|
+    dphi_dx, dphi_dy = _grad(phi, nbr8, nbr8_solid, wall_value=phi_wall)
+    grad_phi_mag = jnp.sqrt(dphi_dx**2 + dphi_dy**2 + 1e-30)
+    # Interface indicator: peaks at diffuse interface
+    interface_w = 4.0 * phi * (1.0 - phi)
+    # Anti-sharpening term pushes ψ away from bulk toward interface
+    psi_target = psi * interface_w / jnp.clip(interface_w.mean(), 1e-30, None)
+    sharpen = 0.1 * D_s_lu * (psi_target - psi) * grad_phi_mag
+
+    psi_new = psi - advection + diffusion + sharpen
+    return jnp.clip(psi_new, 0.0, None)
+
+
+def _bulk_surfactant_step(C, ux, uy, D_bulk_lu, nbr8, nbr8_solid):
+    """Bulk surfactant advection-diffusion: ∂C/∂t + u·∇C = D_bulk·∇²C."""
+    dC_dx, dC_dy = _grad(C, nbr8, nbr8_solid, wall_value=0.0)
+    advection = ux * dC_dx + uy * dC_dy
+    diffusion = D_bulk_lu * _laplacian(C, nbr8, nbr8_solid, wall_value=0.0)
+    C_new = C - advection + diffusion
+    return jnp.clip(C_new, 0.0, None)
+
+
+def _adsorption_desorption(psi, C, phi, k_a_lu, k_d_lu, psi_inf_lu,
+                           nbr8, nbr8_solid, phi_wall=1.0):
+    """Langmuir kinetics: j = k_a·C_int·(ψ_inf - ψ) - k_d·ψ.
+    Couples interfacial ψ and bulk C at the diffuse interface."""
+    dphi_dx, dphi_dy = _grad(phi, nbr8, nbr8_solid, wall_value=phi_wall)
+    grad_phi_mag = jnp.sqrt(dphi_dx**2 + dphi_dy**2 + 1e-30)
+    # Interface indicator: significant |∇φ| marks interface cells
+    interface_mask = grad_phi_mag / jnp.clip(grad_phi_mag.max(), 1e-30, None)
+
+    # Source term (active at interface)
+    j = (k_a_lu * C * (psi_inf_lu - psi) - k_d_lu * psi) * interface_mask
+
+    psi_new = jnp.clip(psi + j, 0.0, psi_inf_lu)
+    # Mass conservation: bulk loses what interface gains
+    C_new = jnp.clip(C - j, 0.0, None)
+    return psi_new, C_new
+
+
+def _marangoni_force(phi, sigma_local, nbr8, nbr8_solid, phi_wall=1.0):
+    """Marangoni force: tangential gradient of σ at interface.
+    F_ma = [∇σ - (∇σ·n)n] · |∇φ|  where n = ∇φ/|∇φ|."""
+    dsig_dx, dsig_dy = _grad(sigma_local, nbr8, nbr8_solid, wall_value=sigma_local.mean())
+    dphi_dx, dphi_dy = _grad(phi, nbr8, nbr8_solid, wall_value=phi_wall)
+    grad_phi_mag = jnp.sqrt(dphi_dx**2 + dphi_dy**2 + 1e-30)
+
+    # Unit normal
+    nx = dphi_dx / grad_phi_mag
+    ny = dphi_dy / grad_phi_mag
+
+    # Project out normal component of ∇σ → tangential ∇_s(σ)
+    dsig_n = dsig_dx * nx + dsig_dy * ny
+    fx_ma = (dsig_dx - dsig_n * nx) * grad_phi_mag
+    fy_ma = (dsig_dy - dsig_n * ny) * grad_phi_mag
+
+    return fx_ma, fy_ma
+
+
+def _apply_surfactant_bc(psi, C, bc_map_fluid, inlet_data, outlet_mask, outlet_upstream,
+                         C_inlet=0.0):
+    """Surfactant BCs: inlet C=C_inlet, ψ=0; outlet: Neumann."""
+    for type_id, _phi_val, _ux_lu, _uy_lu in inlet_data:
+        mask = (bc_map_fluid == type_id)
+        psi = jnp.where(mask, 0.0, psi)
+        C = jnp.where(mask, C_inlet, C)
+
+    # Outlet: Neumann (copy from upstream)
+    psi = jnp.where(outlet_mask, psi[outlet_upstream], psi)
+    C = jnp.where(outlet_mask, C[outlet_upstream], C)
+
+    return psi, C
+
+
+# ── Viscoelasticity (Oldroyd-B, disperse phase) ───────────────────────────
+
+def _conformation_step(A_xx, A_xy, A_yy, ux, uy, phi,
+                       lambda_p_lu, kappa_ve_lu, nbr8, nbr8_solid):
+    """Explicit Euler for upper-convected Maxwell: conformation tensor A.
+    ∂A/∂t + u·∇A = A·∇u + (∇u)ᵀ·A - (1/λ)(A-I) + κ_ve·∇²A.
+    Active in disperse phase (phi→0). Wall BC: A=I."""
+    # Velocity gradients
+    dux_dx, dux_dy = _grad(ux, nbr8, nbr8_solid, wall_value=0.0)
+    duy_dx, duy_dy = _grad(uy, nbr8, nbr8_solid, wall_value=0.0)
+
+    # Advection of A components
+    dAxx_dx, dAxx_dy = _grad(A_xx, nbr8, nbr8_solid, wall_value=1.0)
+    dAxy_dx, dAxy_dy = _grad(A_xy, nbr8, nbr8_solid, wall_value=0.0)
+    dAyy_dx, dAyy_dy = _grad(A_yy, nbr8, nbr8_solid, wall_value=1.0)
+
+    adv_xx = ux * dAxx_dx + uy * dAxx_dy
+    adv_xy = ux * dAxy_dx + uy * dAxy_dy
+    adv_yy = ux * dAyy_dx + uy * dAyy_dy
+
+    # Upper-convected derivative: A·∇u + (∇u)ᵀ·A
+    stretch_xx = 2.0 * (A_xx * dux_dx + A_xy * dux_dy)
+    stretch_xy = A_xx * duy_dx + A_xy * duy_dy + A_xy * dux_dx + A_yy * dux_dy
+    stretch_yy = 2.0 * (A_xy * duy_dx + A_yy * duy_dy)
+
+    # Relaxation: -(1/λ)(A - I)
+    inv_lambda = 1.0 / lambda_p_lu
+    relax_xx = -inv_lambda * (A_xx - 1.0)
+    relax_xy = -inv_lambda * A_xy
+    relax_yy = -inv_lambda * (A_yy - 1.0)
+
+    # Artificial diffusion for stability
+    diff_xx = kappa_ve_lu * _laplacian(A_xx, nbr8, nbr8_solid, wall_value=1.0)
+    diff_xy = kappa_ve_lu * _laplacian(A_xy, nbr8, nbr8_solid, wall_value=0.0)
+    diff_yy = kappa_ve_lu * _laplacian(A_yy, nbr8, nbr8_solid, wall_value=1.0)
+
+    # Disperse-phase mask: (1-phi) → 1 in disperse, 0 in continuous
+    disp = 1.0 - phi
+
+    A_xx_new = A_xx + disp * (-adv_xx + stretch_xx + relax_xx + diff_xx)
+    A_xy_new = A_xy + disp * (-adv_xy + stretch_xy + relax_xy + diff_xy)
+    A_yy_new = A_yy + disp * (-adv_yy + stretch_yy + relax_yy + diff_yy)
+
+    # Reset to identity in continuous phase
+    A_xx_new = jnp.where(phi > 0.99, 1.0, A_xx_new)
+    A_xy_new = jnp.where(phi > 0.99, 0.0, A_xy_new)
+    A_yy_new = jnp.where(phi > 0.99, 0.0, A_yy_new)
+
+    return A_xx_new, A_xy_new, A_yy_new
+
+
+def _polymer_stress_force(A_xx, A_xy, A_yy, phi, mu_p_lu, lambda_p_lu,
+                          nbr8, nbr8_solid):
+    """div(τ_p) as body force, masked to disperse phase.
+    τ_p = (μ_p/λ_p)(A - I) · (1-φ)."""
+    coeff = mu_p_lu / lambda_p_lu
+    disp = 1.0 - phi
+
+    tau_xx = coeff * (A_xx - 1.0) * disp
+    tau_xy = coeff * A_xy * disp
+    tau_yy = coeff * (A_yy - 1.0) * disp
+
+    dtxx_dx, _ = _grad(tau_xx, nbr8, nbr8_solid, wall_value=0.0)
+    dtxy_dx, dtxy_dy = _grad(tau_xy, nbr8, nbr8_solid, wall_value=0.0)
+    _, dtyy_dy = _grad(tau_yy, nbr8, nbr8_solid, wall_value=0.0)
+
+    fx_p = dtxx_dx + dtxy_dy
+    fy_p = dtxy_dx + dtyy_dy
+
+    return fx_p, fy_p
+
+
+def _apply_conformation_bc(A_xx, A_xy, A_yy, bc_map_fluid, inlet_data,
+                           outlet_mask, outlet_upstream):
+    """Conformation BCs: inlet A=I; outlet: Neumann."""
+    for type_id, _phi_val, _ux_lu, _uy_lu in inlet_data:
+        mask = (bc_map_fluid == type_id)
+        A_xx = jnp.where(mask, 1.0, A_xx)
+        A_xy = jnp.where(mask, 0.0, A_xy)
+        A_yy = jnp.where(mask, 1.0, A_yy)
+
+    A_xx = jnp.where(outlet_mask, A_xx[outlet_upstream], A_xx)
+    A_xy = jnp.where(outlet_mask, A_xy[outlet_upstream], A_xy)
+    A_yy = jnp.where(outlet_mask, A_yy[outlet_upstream], A_yy)
+
+    return A_xx, A_xy, A_yy
+
+
 # ── Sparse inlet/outlet BCs ────────────────────────────────────────────────
 
 def _apply_f_bc(f, bc_map_fluid, inlet_data, outlet_mask, outlet_upstream,
@@ -336,12 +605,22 @@ class TwoPhaseSim:
         theta_rad = np.radians(phys.contact_angle_deg)
         self.phi_wall = 0.5 * (1.0 - np.cos(theta_rad))
 
+        # Surfactant config
+        self.surfactant_enabled = self.units.surfactant_enabled
+        self.C_inlet = self.units.C_inlet_lu
+
+        # Viscoelastic config
+        self.viscoelastic_enabled = self.units.viscoelastic_enabled
+
         # JIT-compile step function once
         self._jit_step = jax.jit(self._step)
 
     def _tau_field(self, phi):
-        """Linear interpolation of relaxation time: τ(φ) = τ_c·φ + τ_d·(1-φ)."""
-        return self.units.tau_c * phi + self.units.tau_d * (1.0 - phi)
+        """Linear interpolation of relaxation time: τ(φ) = τ_c·φ + τ_d·(1-φ).
+        When viscoelastic: τ_d uses solvent-only viscosity."""
+        tau_d_eff = (self.units.tau_d_solvent if self.viscoelastic_enabled
+                     else self.units.tau_d)
+        return self.units.tau_c * phi + tau_d_eff * (1.0 - phi)
 
     def _init_state(self):
         """Initialize f = equilibrium(rho=1, u=0) and φ = 1 (oil everywhere)."""
@@ -351,52 +630,104 @@ class TwoPhaseSim:
         uy0 = jnp.zeros(n, dtype=jnp.float64)
         f = _equilibrium(rho0, ux0, uy0)
         phi = jnp.ones(n, dtype=jnp.float64)
-        return f, phi
+        psi = jnp.zeros(n, dtype=jnp.float64)
+        C = jnp.zeros(n, dtype=jnp.float64)
+        # Conformation tensor: A = I (identity)
+        A_xx = jnp.ones(n, dtype=jnp.float64)
+        A_xy = jnp.zeros(n, dtype=jnp.float64)
+        A_yy = jnp.ones(n, dtype=jnp.float64)
+        return f, phi, psi, C, A_xx, A_xy, A_yy
 
     def init_state(self, phi_init: np.ndarray | None = None):
-        """Initialize (f, phi). If phi_init given (dense ny,nx), extract fluid cells."""
-        f, phi = self._init_state()
+        """Initialize state. Returns tuple of active fields."""
+        f, phi, psi, C, A_xx, A_xy, A_yy = self._init_state()
         if phi_init is not None:
             phi_dense = np.asarray(phi_init, dtype=np.float64)
             phi_sparse = phi_dense[
                 np.asarray(self.fluid_y), np.asarray(self.fluid_x)
             ]
             phi = jnp.array(phi_sparse)
+        surf = self.surfactant_enabled
+        ve = self.viscoelastic_enabled
+        if surf and ve:
+            return f, phi, psi, C, A_xx, A_xy, A_yy
+        elif surf:
+            return f, phi, psi, C
+        elif ve:
+            return f, phi, A_xx, A_xy, A_yy
         return f, phi
 
-    def _step(self, f, phi):
-        """One LBM time step (sparse).
+    def _step(self, f, phi, psi, C, A_xx, A_xy, A_yy):
+        """One LBM time step (sparse), with optional extensions.
 
-        Step ordering (Liang et al. 2018 style):
-        1. Macroscopic fields from f
-        2. Chemical potential + surface tension force
-        3. Force-corrected velocity for phase advection
-        4. BGK collision with Guo forcing
-        5. Streaming + bounce-back
-        6. Distribution BCs (inlet equilibrium, outlet Neumann)
-        7. Allen-Cahn phase update (FD, uses corrected velocity)
-        8. Phase-field BCs (re-enforce phi at inlets/outlets)
+        Step ordering (Liang et al. 2018 + surfactant + viscoelastic):
+         1.  Macroscopic fields from f
+         2.  σ_local from ψ (Langmuir EOS)                      [surfactant]
+         3.  Local κ(σ), β(σ) from σ_local                      [surfactant]
+         4.  Chemical potential with (local) κ, β
+         5.  Capillary force F = μ∇φ
+         6.  Marangoni force F_ma = ∇_s(σ)·|∇φ|                 [surfactant]
+         7.  Polymer stress divergence → f_polymer               [viscoelastic]
+         8.  Total force
+         9.  Force-corrected velocity
+        10.  BGK collision with Guo forcing
+        11.  Streaming + bounce-back
+        12.  Distribution BCs
+        13.  Allen-Cahn phase update
+        14.  Phase-field BCs
+        15.  Surfactant transport (FD)                           [surfactant]
+        16.  Conformation tensor evolution                       [viscoelastic]
+        17.  Conformation BCs                                    [viscoelastic]
         """
+        u = self.units
+
         # 1. Macroscopic (bare velocity from distributions)
         rho, ux, uy = _macroscopic(f)
 
-        # 2. Phase field forces
-        mu = _chemical_potential(phi, self.units.kappa, self.units.beta,
+        # 2-3. Local σ → local κ, β (surfactant modulates interface energy)
+        if u.surfactant_enabled:
+            sig_loc = _sigma_local(psi, psi, u.sigma_lbm, u.E0, u.psi_inf_lu)
+            W_lu = float(u.interface_width)
+            kappa_loc = 1.5 * sig_loc * W_lu
+            beta_loc = 12.0 * sig_loc / W_lu
+        else:
+            kappa_loc = u.kappa
+            beta_loc = u.beta
+
+        # 4. Chemical potential
+        mu = _chemical_potential(phi, kappa_loc, beta_loc,
                                  self.nbr8, self.nbr8_solid, self.phi_wall)
+
+        # 5. Capillary force
         fx, fy = _surface_tension_force(phi, mu, self.nbr8, self.nbr8_solid, self.phi_wall)
 
-        # 3. Force-corrected velocity (Guo scheme: u_phys = u_bare + 0.5·F/ρ)
+        # 6. Marangoni force
+        if u.surfactant_enabled:
+            fx_ma, fy_ma = _marangoni_force(phi, sig_loc,
+                                            self.nbr8, self.nbr8_solid, self.phi_wall)
+            fx = fx + fx_ma
+            fy = fy + fy_ma
+
+        # 7. Polymer stress divergence
+        if u.viscoelastic_enabled:
+            fx_p, fy_p = _polymer_stress_force(A_xx, A_xy, A_yy, phi,
+                                               u.mu_p_lu, u.lambda_p_lu,
+                                               self.nbr8, self.nbr8_solid)
+            fx = fx + fx_p
+            fy = fy + fy_p
+
+        # 9. Force-corrected velocity (Guo scheme: u_phys = u_bare + 0.5·F/ρ)
         ux_c = ux + 0.5 * fx / rho
         uy_c = uy + 0.5 * fy / rho
 
-        # 4. Collision (uses bare velocity — Guo Si term handles the correction)
+        # 10. Collision (uses bare velocity — Guo Si term handles the correction)
         tau = self._tau_field(phi)
         f = _collision(f, rho, ux, uy, tau, fx, fy)
 
-        # 5. Streaming + bounce-back
+        # 11. Streaming + bounce-back
         f = _stream_bb(f, self.pull_src, self.pull_bb)
 
-        # 6. Distribution BCs
+        # 12. Distribution BCs
         f = _apply_f_bc(
             f, self.bc_map_fluid, self.inlet_data,
             self.outlet_mask, self.outlet_upstream,
@@ -404,23 +735,72 @@ class TwoPhaseSim:
             rho_target=self.rho_target,
         )
 
-        # 7. Allen-Cahn phase-field update
-        mu = _chemical_potential(phi, self.units.kappa, self.units.beta,
+        # 13. Allen-Cahn phase-field update (recompute μ with potentially local κ,β)
+        mu = _chemical_potential(phi, kappa_loc, beta_loc,
                                  self.nbr8, self.nbr8_solid, self.phi_wall)
-        phi = _allen_cahn_step(phi, ux_c, uy_c, mu, self.units.mobility,
+        phi = _allen_cahn_step(phi, ux_c, uy_c, mu, u.mobility,
                                self.nbr8, self.nbr8_solid, self.phi_wall)
 
-        # 8. Phase-field BCs (must be AFTER Allen-Cahn to prevent diffusion leak)
+        # 14. Phase-field BCs
         phi = _apply_phi_bc(
             phi, self.bc_map_fluid, self.inlet_data,
             self.outlet_mask, self.outlet_upstream,
         )
 
-        return f, phi
+        # 15. Surfactant transport
+        if u.surfactant_enabled:
+            psi = _surfactant_step(psi, ux_c, uy_c, phi, u.D_s_lu,
+                                   self.nbr8, self.nbr8_solid, self.phi_wall)
+            C = _bulk_surfactant_step(C, ux_c, uy_c, u.D_bulk_lu,
+                                      self.nbr8, self.nbr8_solid)
+            psi, C = _adsorption_desorption(psi, C, phi, u.k_a_lu, u.k_d_lu,
+                                            u.psi_inf_lu, self.nbr8,
+                                            self.nbr8_solid, self.phi_wall)
+            psi, C = _apply_surfactant_bc(psi, C, self.bc_map_fluid,
+                                          self.inlet_data, self.outlet_mask,
+                                          self.outlet_upstream, self.C_inlet)
 
-    def step(self, f, phi):
-        """One JIT-compiled LBM time step. Returns (f_new, phi_new)."""
-        return self._jit_step(f, phi)
+        # 16-17. Conformation tensor evolution
+        if u.viscoelastic_enabled:
+            A_xx, A_xy, A_yy = _conformation_step(
+                A_xx, A_xy, A_yy, ux_c, uy_c, phi,
+                u.lambda_p_lu, u.kappa_ve_lu,
+                self.nbr8, self.nbr8_solid,
+            )
+            A_xx, A_xy, A_yy = _apply_conformation_bc(
+                A_xx, A_xy, A_yy, self.bc_map_fluid,
+                self.inlet_data, self.outlet_mask, self.outlet_upstream,
+            )
+
+        return f, phi, psi, C, A_xx, A_xy, A_yy
+
+    def step(self, f, phi, psi=None, C=None, A_xx=None, A_xy=None, A_yy=None):
+        """One JIT-compiled LBM time step. Returns active fields matching input."""
+        n = self.n_fluid
+        z = jnp.zeros(n, dtype=jnp.float64)
+        o = jnp.ones(n, dtype=jnp.float64)
+        if psi is None:
+            psi = z
+        if C is None:
+            C = z
+        if A_xx is None:
+            A_xx = o
+        if A_xy is None:
+            A_xy = z
+        if A_yy is None:
+            A_yy = o
+        f, phi, psi, C, A_xx, A_xy, A_yy = self._jit_step(
+            f, phi, psi, C, A_xx, A_xy, A_yy
+        )
+        surf = self.surfactant_enabled
+        ve = self.viscoelastic_enabled
+        if surf and ve:
+            return f, phi, psi, C, A_xx, A_xy, A_yy
+        elif surf:
+            return f, phi, psi, C
+        elif ve:
+            return f, phi, A_xx, A_xy, A_yy
+        return f, phi
 
     @staticmethod
     def macroscopic(f):
@@ -438,10 +818,12 @@ class TwoPhaseSim:
         callback(step, phi, rho, ux, uy) is called every callback_interval steps.
         Returns dict with final state arrays (as numpy).
         """
-        f, phi = self._init_state()
+        f, phi, psi, C, A_xx, A_xy, A_yy = self._init_state()
 
         for t in range(n_steps):
-            f, phi = self._jit_step(f, phi)
+            f, phi, psi, C, A_xx, A_xy, A_yy = self._jit_step(
+                f, phi, psi, C, A_xx, A_xy, A_yy
+            )
 
             if callback and (t + 1) % callback_interval == 0:
                 rho, ux, uy = _macroscopic(f)
@@ -454,7 +836,7 @@ class TwoPhaseSim:
                 )
 
         rho, ux, uy = _macroscopic(f)
-        return {
+        result = {
             "phi": np.asarray(phi),
             "rho": np.asarray(rho),
             "ux": np.asarray(ux),
@@ -462,3 +844,11 @@ class TwoPhaseSim:
             "f": np.asarray(f),
             "units": self.units,
         }
+        if self.surfactant_enabled:
+            result["psi"] = np.asarray(psi)
+            result["C"] = np.asarray(C)
+        if self.viscoelastic_enabled:
+            result["A_xx"] = np.asarray(A_xx)
+            result["A_xy"] = np.asarray(A_xy)
+            result["A_yy"] = np.asarray(A_yy)
+        return result

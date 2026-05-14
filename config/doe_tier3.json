@@ -1,0 +1,37 @@
+{
+  "name": "doe_tier3",
+  "description": "Tier 3: Contact angle sweep — fixed best dripping conditions (Q_oil=300, Q_aq=50, 2.5% Pluronic). θ = 120°, 150°, 180°. 3 runs.",
+  "fixed_params": {
+    "Q_oil_uL_min": 300,
+    "Q_aq_uL_min": 50,
+    "ratio": 6.00,
+    "pluronic_pct": 2.5,
+    "bsa_pct": 1.0,
+    "mu_aq_mPas": 1.75,
+    "sigma_mN_m": 3.5,
+    "viscosity_ratio_lambda": 1.41,
+    "dx_um": 2.5,
+    "tau_oil": 0.55,
+    "n_steps": 37000,
+    "vtk_interval": 500,
+    "hdf5_interval": 500,
+    "geometry_h5": "geometry/geometry.h5"
+  },
+  "runs": [
+    {
+      "id": "T3_01",
+      "contact_angle_deg": 120,
+      "note": "moderately hydrophilic — expect smaller droplets"
+    },
+    {
+      "id": "T3_02",
+      "contact_angle_deg": 150,
+      "note": "reference (PDMS with Pluronic — strongly hydrophobic)"
+    },
+    {
+      "id": "T3_03",
+      "contact_angle_deg": 180,
+      "note": "perfectly non-wetting"
+    }
+  ]
+}

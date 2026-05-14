@@ -1,0 +1,45 @@
+{
+  "name": "benchmark_contact_angle",
+  "description": "Sessile droplet contact angle benchmark. A droplet placed on a flat wall should equilibrate to θ=150° (PDMS with Pluronic surfactant). Measure contact angle from φ=0.5 isoline.",
+  "app": "droplet_generator",
+  "benchmark": true,
+  "geometry": {
+    "type": "box",
+    "nx": 128, "ny": 128, "nz": 64,
+    "periodic": [false, true, false],
+    "bottom_wall": true
+  },
+  "initial_condition": {
+    "type": "sessile_droplet",
+    "center_xz": [64, 0],
+    "radius_nodes": 20,
+    "phi_inside": 0.0,
+    "phi_outside": 1.0,
+    "note": "Droplet placed at z=0 wall with approximate θ=150° initial shape"
+  },
+  "params": {
+    "tau_c": 0.55,
+    "tau_d": 0.55,
+    "sigma": 0.001,
+    "contact_angle_deg": 150,
+    "interface_width_dx": 4,
+    "mobility": 0.1,
+    "n_steps": 10000,
+    "convergence_check_interval": 200,
+    "vtk_interval": 500,
+    "hdf5_interval": 0
+  },
+  "success_criteria": {
+    "contact_angle_target_deg": 150,
+    "contact_angle_tolerance_deg": 3.0
+  },
+  "fixed_params": {
+    "tau_c": 0.55, "tau_d": 0.55, "sigma": 0.001,
+    "contact_angle_deg": 150, "interface_width_dx": 4, "mobility": 0.1,
+    "n_steps": 10000, "vtk_interval": 500, "hdf5_interval": 0,
+    "geometry_type": "box", "nx": 128, "ny": 128, "nz": 64
+  },
+  "runs": [
+    { "id": "BM_ContactAngle_150", "note": "θ=150° sessile droplet, tolerance ±3°" }
+  ]
+}

@@ -26,6 +26,9 @@ class SimView(QWidget):
     start_requested = Signal()
     stop_requested = Signal()
     reset_requested = Signal()
+    timeline_scrubbed = Signal(int)
+    play_toggled = Signal(bool)
+    export_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -69,6 +72,16 @@ class SimView(QWidget):
         self._chk_pressure.toggled.connect(self._on_toggle)
         btn_row.addWidget(self._chk_pressure)
 
+        self._chk_surfactant = QCheckBox("Surfactant")
+        self._chk_surfactant.setChecked(False)
+        self._chk_surfactant.toggled.connect(self._on_toggle)
+        btn_row.addWidget(self._chk_surfactant)
+
+        self._chk_stress = QCheckBox("Stress")
+        self._chk_stress.setChecked(False)
+        self._chk_stress.toggled.connect(self._on_toggle)
+        btn_row.addWidget(self._chk_stress)
+
         layout.addLayout(btn_row)
 
         # Image display row
@@ -106,7 +119,61 @@ class SimView(QWidget):
         self._prs_plot.setVisible(False)
         self._img_row.addWidget(self._prs_plot)
 
+        # Surfactant (ψ) plot
+        self._psi_plot = pg.PlotWidget(title="Surfactant (psi)")
+        self._psi_plot.setBackground(ui.Theme.BG_DARK)
+        self._psi_plot.setAspectLocked(True)
+        self._psi_plot.setLabel("bottom", "x [µm]")
+        self._psi_plot.setLabel("left", "y [µm]")
+        self._psi_img = pg.ImageItem()
+        self._psi_plot.addItem(self._psi_img)
+        self._psi_plot.setVisible(False)
+        self._img_row.addWidget(self._psi_plot)
+
+        # Polymer stress (tr(A)-2 trace deviation) plot
+        self._stress_plot = pg.PlotWidget(title="Polymer Stress tr(A)")
+        self._stress_plot.setBackground(ui.Theme.BG_DARK)
+        self._stress_plot.setAspectLocked(True)
+        self._stress_plot.setLabel("bottom", "x [µm]")
+        self._stress_plot.setLabel("left", "y [µm]")
+        self._stress_img = pg.ImageItem()
+        self._stress_plot.addItem(self._stress_img)
+        self._stress_plot.setVisible(False)
+        self._img_row.addWidget(self._stress_plot)
+
         layout.addLayout(self._img_row, stretch=1)
+
+        # Timeline bar (hidden until frames exist)
+        self._timeline_row = QWidget()
+        tl_lay = QHBoxLayout(self._timeline_row)
+        tl_lay.setContentsMargins(4, 0, 4, 0)
+        tl_lay.setSpacing(6)
+
+        self._play_btn = ui.button("Play", variant="primary", size="inline")
+        self._play_btn.clicked.connect(self._on_play_clicked)
+        tl_lay.addWidget(self._play_btn)
+
+        self._timeline = ui.slider(minimum=0, maximum=0, value=0)
+        self._timeline.valueChanged.connect(self._on_slider_moved)
+        tl_lay.addWidget(self._timeline, stretch=1)
+
+        self._frame_label = ui.status_label("", kind="muted", small=True)
+        self._frame_label.setMinimumWidth(120)
+        tl_lay.addWidget(self._frame_label)
+
+        self._speed_spin = ui.double_box(
+            minimum=0.1, maximum=10.0, value=1.0, step=0.5, decimals=1, suffix="x",
+        )
+        tl_lay.addWidget(self._speed_spin)
+
+        self._export_btn = ui.button("Export", size="inline")
+        self._export_btn.clicked.connect(self.export_requested.emit)
+        tl_lay.addWidget(self._export_btn)
+
+        self._timeline_row.setVisible(False)
+        self._is_live = True
+        self._playing = False
+        layout.addWidget(self._timeline_row)
 
         # Status line
         self._status = ui.status_label("Ready", kind="muted", small=True)
@@ -138,6 +205,16 @@ class SimView(QWidget):
             pos=[0.0, 0.5, 1.0],
             color=[(59, 76, 192), (221, 221, 221), (180, 4, 38)],
         ))
+        # Surfactant: dark → green → yellow
+        self._psi_lut = _build_lut(pg.ColorMap(
+            pos=[0.0, 0.5, 1.0],
+            color=[(15, 15, 15), (39, 174, 96), (241, 196, 15)],
+        ))
+        # Polymer stress: dark → purple → hot pink
+        self._stress_lut = _build_lut(pg.ColorMap(
+            pos=[0.0, 0.5, 1.0],
+            color=[(15, 15, 15), (128, 0, 128), (255, 105, 180)],
+        ))
 
         self._dx_um = 2.5
         self._origin_um = (0.0, 0.0)
@@ -148,12 +225,16 @@ class SimView(QWidget):
         self._phi_rgba = None
         self._vel_rgba = None
         self._prs_rgba = None
+        self._psi_rgba = None
+        self._stress_rgba = None
         self._first_frame = True
 
     def _on_toggle(self, _checked: bool):
         self._phi_plot.setVisible(self._chk_phase.isChecked())
         self._vel_plot.setVisible(self._chk_velocity.isChecked())
         self._prs_plot.setVisible(self._chk_pressure.isChecked())
+        self._psi_plot.setVisible(self._chk_surfactant.isChecked())
+        self._stress_plot.setVisible(self._chk_stress.isChecked())
 
     def set_geometry_info(
         self,
@@ -182,12 +263,20 @@ class SimView(QWidget):
 
             self._prs_rgba = np.zeros((ny, nx, 4), dtype=np.uint8)
             self._prs_rgba[self._fluid_y, self._fluid_x, 3] = 255
+
+            self._psi_rgba = np.zeros((ny, nx, 4), dtype=np.uint8)
+            self._psi_rgba[self._fluid_y, self._fluid_x, 3] = 255
+
+            self._stress_rgba = np.zeros((ny, nx, 4), dtype=np.uint8)
+            self._stress_rgba[self._fluid_y, self._fluid_x, 3] = 255
         else:
             self._fluid_y = None
             self._fluid_x = None
             self._phi_rgba = None
             self._vel_rgba = None
             self._prs_rgba = None
+            self._psi_rgba = None
+            self._stress_rgba = None
 
     def set_running(self, running: bool):
         self._start_btn.setEnabled(not running)
@@ -211,6 +300,7 @@ class SimView(QWidget):
         uy: np.ndarray,
         elapsed: float,
         mlups: float,
+        extra: dict | None = None,
     ):
         ox, oy = self._origin_um
         dx = self._dx_um
@@ -243,8 +333,29 @@ class SimView(QWidget):
                 self._prs_img.setImage(self._prs_rgba.transpose(1, 0, 2))
                 self._prs_img.setRect(rect)
 
+            # Surfactant
+            psi = extra.get("psi") if extra else None
+            if self._chk_surfactant.isChecked() and psi is not None and self._psi_rgba is not None:
+                psi_max = float(psi.max()) or 1.0
+                psi_idx = np.clip((psi / psi_max * 255).astype(np.uint8), 0, 255)
+                self._psi_rgba[self._fluid_y, self._fluid_x, :3] = self._psi_lut[psi_idx]
+                self._psi_img.setImage(self._psi_rgba.transpose(1, 0, 2))
+                self._psi_img.setRect(rect)
+
+            # Polymer stress: tr(A) - 2 = (A_xx + A_yy - 2)
+            A_xx = extra.get("A_xx") if extra else None
+            if self._chk_stress.isChecked() and A_xx is not None and self._stress_rgba is not None:
+                A_yy = extra["A_yy"]
+                trace_dev = A_xx + A_yy - 2.0
+                s_max = float(np.abs(trace_dev).max()) or 1.0
+                s_idx = np.clip((trace_dev / s_max * 255).astype(np.uint8), 0, 255)
+                self._stress_rgba[self._fluid_y, self._fluid_x, :3] = self._stress_lut[s_idx]
+                self._stress_img.setImage(self._stress_rgba.transpose(1, 0, 2))
+                self._stress_img.setRect(rect)
+
         if self._first_frame:
-            for plot in (self._phi_plot, self._vel_plot, self._prs_plot):
+            for plot in (self._phi_plot, self._vel_plot, self._prs_plot,
+                         self._psi_plot, self._stress_plot):
                 if plot.isVisible():
                     plot.autoRange()
             self._first_frame = False
@@ -253,3 +364,36 @@ class SimView(QWidget):
         self._status.setText(
             f"Step: {step:>8d}   MLUPS: {mlups:>6.1f}   Elapsed: {elapsed:>7.1f}s"
         )
+
+    def _on_slider_moved(self, value: int):
+        if not self._is_live:
+            self.timeline_scrubbed.emit(value)
+
+    def _on_play_clicked(self):
+        self._playing = not self._playing
+        self.set_play_state(self._playing)
+        self.play_toggled.emit(self._playing)
+
+    def set_timeline_state(self, n_frames: int, current_idx: int, is_live: bool):
+        self._is_live = is_live
+        self._timeline.blockSignals(True)
+        self._timeline.setMaximum(max(0, n_frames - 1))
+        self._timeline.setValue(current_idx)
+        self._timeline.blockSignals(False)
+        self._timeline.setEnabled(not is_live and n_frames > 0)
+        self._play_btn.setVisible(not is_live and n_frames > 1)
+        self._speed_spin.setVisible(not is_live and n_frames > 1)
+        self._export_btn.setVisible(not is_live and n_frames > 0)
+        self._timeline_row.setVisible(n_frames > 0)
+        if n_frames > 0:
+            self._frame_label.setText(f"Frame {current_idx + 1} / {n_frames}")
+        else:
+            self._frame_label.setText("")
+
+    def set_play_state(self, playing: bool):
+        self._playing = playing
+        self._play_btn.setText("Pause" if playing else "Play")
+
+    @property
+    def playback_speed(self) -> float:
+        return self._speed_spin.value()
