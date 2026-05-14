@@ -325,6 +325,14 @@ class EdgeView(QWidget):
     # ── Click → edge dialog ─────────────────────────────────────────────
 
     def _on_point_clicked(self, mx: float, my: float):
+        # Check areas first (click inside rectangle → edit area)
+        for i, area in enumerate(self._areas):
+            if (area["x1_um"] <= mx <= area["x2_um"]
+                    and area["y1_um"] <= my <= area["y2_um"]):
+                self._on_edit_area(i)
+                return
+
+        # Otherwise check edges
         if not self._edges:
             return
 
