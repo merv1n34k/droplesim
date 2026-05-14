@@ -24,6 +24,7 @@ _WALL_COLOR = (150, 150, 150, 220)
 # RGBA for phase fill overlays (only fluid cells are colored)
 _OIL_RGBA = np.array([231, 76, 60, 100], dtype=np.uint8)
 _AQ_RGBA = np.array([52, 152, 219, 100], dtype=np.uint8)
+_OVERLAP_RGBA = np.array([240, 240, 240, 130], dtype=np.uint8)
 
 
 class PhiDialog(QDialog):
@@ -147,6 +148,7 @@ class PhaseView(QWidget):
 
         self._wall_curves: list[pg.PlotDataItem] = []
         self._fill_items: list[pg.ImageItem] = []
+        self._overlap_item: pg.ImageItem | None = None
         self._regions: list[dict] = []
         self._solid_mask = None
         self._dx_um = 2.5
@@ -203,6 +205,43 @@ class PhaseView(QWidget):
         rgba[fluid_in_rect] = color
         return rgba
 
+    def _redraw_overlap(self):
+        """Show white overlay where oil and aqueous regions overlap (phi=0.5)."""
+        if self._overlap_item is not None:
+            self._plot.removeItem(self._overlap_item)
+            self._overlap_item = None
+        if self._solid_mask is None or not self._regions:
+            return
+        ny, nx = self._solid_mask.shape
+        ox, oy = self._origin_um
+        dx = self._dx_um
+        xs = ox + (np.arange(nx) + 0.5) * dx
+        ys = oy + (np.arange(ny) + 0.5) * dx
+        XX, YY = np.meshgrid(xs, ys)
+
+        has_oil = np.zeros((ny, nx), dtype=bool)
+        has_aq = np.zeros((ny, nx), dtype=bool)
+        for r in self._regions:
+            in_rect = (
+                (XX >= r["x1_um"]) & (XX <= r["x2_um"])
+                & (YY >= r["y1_um"]) & (YY <= r["y2_um"])
+                & (~self._solid_mask)
+            )
+            if r["phi"] > 0.5:
+                has_oil |= in_rect
+            else:
+                has_aq |= in_rect
+
+        overlap = has_oil & has_aq
+        if not overlap.any():
+            return
+        rgba = np.zeros((ny, nx, 4), dtype=np.uint8)
+        rgba[overlap] = _OVERLAP_RGBA
+        self._overlap_item = pg.ImageItem()
+        self._overlap_item.setImage(rgba.transpose(1, 0, 2))
+        self._overlap_item.setRect(QRectF(ox, oy, nx * dx, ny * dx))
+        self._plot.addItem(self._overlap_item)
+
     def _on_rect_drawn(self, x1, y1, x2, y2):
         if self._solid_mask is None:
             return
@@ -216,6 +255,7 @@ class PhaseView(QWidget):
             }
             self._regions.append(region)
             self._add_fill_item(region)
+            self._redraw_overlap()
             self._panel.set_regions(self._regions)
             self.phase_changed.emit()
             label = "oil" if phi > 0.5 else "aqueous"
@@ -239,6 +279,7 @@ class PhaseView(QWidget):
             self._regions.pop(idx)
             item = self._fill_items.pop(idx)
             self._plot.removeItem(item)
+            self._redraw_overlap()
             self._panel.set_regions(self._regions)
             self.phase_changed.emit()
 
@@ -256,13 +297,21 @@ class PhaseView(QWidget):
         ys = oy + (np.arange(ny) + 0.5) * self._dx_um
         XX, YY = np.meshgrid(xs, ys)
 
+        has_oil = np.zeros((ny, nx), dtype=bool)
+        has_aq = np.zeros((ny, nx), dtype=bool)
         for r in self._regions:
-            mask = (
+            in_rect = (
                 (XX >= r["x1_um"]) & (XX <= r["x2_um"])
                 & (YY >= r["y1_um"]) & (YY <= r["y2_um"])
                 & (~self._solid_mask)
             )
-            phi[mask] = r["phi"]
+            if r["phi"] > 0.5:
+                has_oil |= in_rect
+            else:
+                has_aq |= in_rect
+
+        phi[has_aq & ~has_oil] = 0.0
+        phi[has_oil & has_aq] = 0.5
 
         return phi
 
@@ -273,4 +322,5 @@ class PhaseView(QWidget):
         self._regions = list(regions)
         for r in self._regions:
             self._add_fill_item(r)
+        self._redraw_overlap()
         self._panel.set_regions(self._regions)
