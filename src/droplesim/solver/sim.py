@@ -537,10 +537,10 @@ def _apply_f_bc(f, bc_map_fluid, inlet_data, outlet_mask, outlet_upstream,
     """Apply inlet equilibrium and outlet BCs to distributions only."""
     n = f.shape[1]
 
+    rho_local = f.sum(axis=0)
     for type_id, _phi_val, ux_lu, uy_lu in inlet_data:
         mask = (bc_map_fluid == type_id)
-        rho_in = jnp.ones(n, dtype=jnp.float64)
-        feq = _equilibrium(rho_in, ux_lu * jnp.ones(n, dtype=jnp.float64),
+        feq = _equilibrium(rho_local, ux_lu * jnp.ones(n, dtype=jnp.float64),
                            uy_lu * jnp.ones(n, dtype=jnp.float64))
         f = jnp.where(mask[None], feq, f)
 

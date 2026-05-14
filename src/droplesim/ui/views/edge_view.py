@@ -254,7 +254,9 @@ class EdgeView(QWidget):
                 mid = (p0 + p1) / 2
                 s = self._arrow_scale(edge.get("ux", 0), edge.get("uy", 0), self._v_max)
                 arrow_len = (5 + 15 * s) * self._dx_um
-                tip = mid + np.array(ndir) * arrow_len
+                # Offset arrow base away from the edge so it doesn't sit on top
+                base = mid + np.array(ndir) * 5 * self._dx_um
+                tip = base + np.array(ndir) * arrow_len
                 angle = np.degrees(np.arctan2(ndir[1], ndir[0]))
                 arrow = pg.ArrowItem(
                     pos=(tip[0], tip[1]),
