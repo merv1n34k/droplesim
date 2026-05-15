@@ -28,7 +28,7 @@ $(GEOMETRY_H5): src/droplesim/geometry/dxf_to_voxel.py $(DXF)
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 test:
-	uv run python -m pytest src/ -x -q 2>/dev/null || true
+	uv run --with pytest python -m pytest tests -x -q
 
 test-all: test
 	uv run python -c "from droplesim.solver.sim import TwoPhaseSim; print('solver import OK')"
