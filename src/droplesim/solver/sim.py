@@ -325,19 +325,26 @@ def _allen_cahn_step(phi, ux, uy, mu, mobility, nbr8, nbr8_solid,
                      phi_wall=1.0, interface_width=4):
     """Conservative Allen-Cahn step.
 
-    ∂φ/∂t + ∇·(φu) = M·∇²μ
+    ∂φ/∂t + ∇·(φu) = M∇²μ
 
-    Conservative advection (divergence form) preserves mass.
-    Cahn-Hilliard diffusion M·∇²μ provides thermodynamic driving force
-    toward equilibrium (φ=0 or φ=1) via the double-well chemical potential.
+    The explicit update is clipped for boundedness and then corrected for the
+    clipping drift before inlet/outlet phase BCs are applied.
     """
     # Conservative advection: ∇·(φu)
     adv = _divergence(phi * ux, phi * uy, nbr8, nbr8_solid)
 
-    # Cahn-Hilliard diffusion: M·∇²μ (mu wall_value=0: at φ=1 the double-well gives μ≈0)
+    # Chemical-potential diffusion (mu wall_value=0: φ=1 double-well minimum).
     diff = mobility * _laplacian(mu, nbr8, nbr8_solid, wall_value=0.0)
 
-    phi_new = phi - adv + diff
+    phi_new = jnp.clip(phi - adv + diff, 0.0, 1.0)
+
+    # Correct numerical clipping drift before inlet/outlet phase BCs are applied.
+    mass_err = phi.sum() - phi_new.sum()
+    add_capacity = jnp.clip(1.0 - phi_new, 0.0, None)
+    remove_capacity = jnp.clip(phi_new, 0.0, None)
+    capacity = jnp.where(mass_err > 0.0, add_capacity, remove_capacity)
+    capacity_sum = jnp.clip(capacity.sum(), 1e-30, None)
+    phi_new = phi_new + mass_err * capacity / capacity_sum
     return jnp.clip(phi_new, 0.0, 1.0)
 
 
