@@ -1,7 +1,7 @@
 import numpy as np
 
 from droplesim.solver.geometry2d import BC_OUTLET, BCSpec, Geometry2D, build_sparse_maps
-from droplesim.solver.sim import PhysParams, TwoPhaseSim, convert_units
+from droplesim.solver.sim import PhysParams, TwoPhaseSim, contact_angle_to_phi_wall, convert_units
 
 
 def test_convert_units_keeps_viscosity_ratio_in_tau_d():
@@ -21,6 +21,12 @@ def test_convert_units_keeps_viscosity_ratio_in_tau_d():
     assert units.sigma_lbm > 0.0
     assert units.kappa > 0.0
     assert units.beta > 0.0
+
+
+def test_contact_angle_maps_to_wall_phase_value():
+    assert abs(contact_angle_to_phi_wall(0.0) - 0.0) < 1e-12
+    assert abs(contact_angle_to_phi_wall(90.0) - 0.5) < 1e-12
+    assert abs(contact_angle_to_phi_wall(180.0) - 1.0) < 1e-12
 
 
 def test_pressure_cap_does_not_rescale_material_properties():

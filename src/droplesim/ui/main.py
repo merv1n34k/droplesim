@@ -30,7 +30,7 @@ from droplesim.solver.geometry2d import (
     load_contours,
     rasterize_contours,
 )
-from droplesim.solver.sim import PhysParams, TwoPhaseSim
+from droplesim.solver.sim import PhysParams, TwoPhaseSim, contact_angle_to_phi_wall
 from droplesim.ui.frame_buffer import FrameBuffer, FrameRecord
 from droplesim.ui.panels.params_panel import ParamsPanel
 from droplesim.ui.state import SessionState
@@ -286,6 +286,51 @@ class MainWindow(QMainWindow):
         n = len(self._phase_view.get_regions())
         log.info("Phase regions updated: %d regions", n)
 
+    def _apply_wall_contact_overrides(self, sparse, edges_data: list[dict]):
+        overrides = [
+            e for e in edges_data
+            if e.get("kind") == "wall" and e.get("contact_angle_deg") is not None
+        ]
+        if not overrides:
+            return
+
+        fy = sparse.fluid_yx[:, 0]
+        fx = sparse.fluid_yx[:, 1]
+        ox, oy = self._origin_um
+        cell_pts = np.column_stack((
+            ox + (fx + 0.5) * self._dx_um,
+            oy + (fy + 0.5) * self._dx_um,
+        ))
+        phi_wall = np.full(sparse.nbr8_solid.shape, np.nan, dtype=np.float64)
+        threshold = 1.5 * self._dx_um
+
+        for edge in overrides:
+            pts = np.asarray(edge.get("points_um", []), dtype=np.float64)
+            if len(pts) < 2:
+                continue
+            near_edge = np.zeros(len(cell_pts), dtype=bool)
+            for k in range(len(pts) - 1):
+                p0 = pts[k]
+                p1 = pts[k + 1]
+                seg = p1 - p0
+                seg_len2 = float(np.dot(seg, seg))
+                if seg_len2 < 1e-24:
+                    continue
+                rel = cell_pts - p0
+                t = np.clip((rel @ seg) / seg_len2, 0.0, 1.0)
+                closest = p0 + t[:, None] * seg
+                dist = np.linalg.norm(cell_pts - closest, axis=1)
+                near_edge |= dist <= threshold
+            if near_edge.any():
+                value = contact_angle_to_phi_wall(edge["contact_angle_deg"])
+                phi_wall[:, near_edge] = np.where(
+                    sparse.nbr8_solid[:, near_edge],
+                    value,
+                    phi_wall[:, near_edge],
+                )
+
+        sparse.phi_wall_nbr8 = phi_wall
+
     def _build_geometry(self):
         # 1) Edge-based BCs (click-on-edge)
         edges_data = self._edge_view.get_edges()
@@ -352,6 +397,7 @@ class MainWindow(QMainWindow):
             bc_specs.extend(area_bc_specs)
 
         sparse = build_sparse_maps(self._solid_mask, bc_map)
+        self._apply_wall_contact_overrides(sparse, edges_data)
 
         return Geometry2D(
             solid_mask=self._solid_mask,

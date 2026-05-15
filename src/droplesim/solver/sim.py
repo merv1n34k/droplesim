@@ -52,6 +52,12 @@ _CS2 = 1.0 / 3.0
 _Q = 9
 
 
+def contact_angle_to_phi_wall(contact_angle_deg: float) -> float:
+    """Map contact angle to the wall phase value used by diffuse-wall stencils."""
+    theta_rad = np.radians(contact_angle_deg)
+    return float(0.5 * (1.0 - np.cos(theta_rad)))
+
+
 # ── Data classes ──────────────────────────────────────────────────────────────
 
 @dataclass
@@ -670,8 +676,14 @@ class TwoPhaseSim:
         # Wall wetting BC: phi_wall from contact angle (Ding & Spelt 2007)
         # θ measured through aqueous phase: 150° = hydrophobic (oil-wet)
         # θ=180° → phi_wall=1 (fully oil-wet), θ=90° → 0.5, θ=0° → 0 (aqueous-wet)
-        theta_rad = np.radians(phys.contact_angle_deg)
-        self.phi_wall = 0.5 * (1.0 - np.cos(theta_rad))
+        self.phi_wall = contact_angle_to_phi_wall(phys.contact_angle_deg)
+        if sp.phi_wall_nbr8 is None:
+            self.phi_wall_nbr8 = self.phi_wall
+        else:
+            phi_wall_nbr8 = jnp.array(sp.phi_wall_nbr8, dtype=jnp.float64)
+            self.phi_wall_nbr8 = jnp.where(
+                jnp.isnan(phi_wall_nbr8), self.phi_wall, phi_wall_nbr8
+            )
 
         # Surfactant config
         self.surfactant_enabled = self.units.surfactant_enabled
@@ -764,15 +776,18 @@ class TwoPhaseSim:
 
         # 4. Chemical potential
         mu = _chemical_potential(phi, kappa_loc, beta_loc,
-                                 self.nbr8, self.nbr8_solid, self.phi_wall)
+                                 self.nbr8, self.nbr8_solid, self.phi_wall_nbr8)
 
         # 5. Capillary force
-        fx, fy = _surface_tension_force(phi, mu, self.nbr8, self.nbr8_solid, self.phi_wall)
+        fx, fy = _surface_tension_force(
+            phi, mu, self.nbr8, self.nbr8_solid, self.phi_wall_nbr8
+        )
 
         # 6. Marangoni force
         if u.surfactant_enabled:
             fx_ma, fy_ma = _marangoni_force(phi, sig_loc,
-                                            self.nbr8, self.nbr8_solid, self.phi_wall)
+                                            self.nbr8, self.nbr8_solid,
+                                            self.phi_wall_nbr8)
             fx = fx + fx_ma
             fy = fy + fy_ma
 
@@ -805,9 +820,9 @@ class TwoPhaseSim:
 
         # 13. Allen-Cahn phase-field update (recompute μ with potentially local κ,β)
         mu = _chemical_potential(phi, kappa_loc, beta_loc,
-                                 self.nbr8, self.nbr8_solid, self.phi_wall)
+                                 self.nbr8, self.nbr8_solid, self.phi_wall_nbr8)
         phi = _allen_cahn_step(phi, ux_c, uy_c, mu, u.mobility,
-                               self.nbr8, self.nbr8_solid, self.phi_wall,
+                               self.nbr8, self.nbr8_solid, self.phi_wall_nbr8,
                                interface_width=u.interface_width)
 
         # 14. Phase-field BCs
@@ -819,12 +834,12 @@ class TwoPhaseSim:
         # 15. Surfactant transport
         if u.surfactant_enabled:
             psi = _surfactant_step(psi, ux_c, uy_c, phi, u.D_s_lu,
-                                   self.nbr8, self.nbr8_solid, self.phi_wall)
+                                   self.nbr8, self.nbr8_solid, self.phi_wall_nbr8)
             C = _bulk_surfactant_step(C, ux_c, uy_c, u.D_bulk_lu,
                                       self.nbr8, self.nbr8_solid)
             psi, C = _adsorption_desorption(psi, C, phi, u.k_a_lu, u.k_d_lu,
                                             u.psi_inf_lu, self.nbr8,
-                                            self.nbr8_solid, self.phi_wall)
+                                            self.nbr8_solid, self.phi_wall_nbr8)
             psi, C = _apply_surfactant_bc(psi, C, self.bc_map_fluid,
                                           self.inlet_data, self.outlet_mask,
                                           self.outlet_upstream, self.C_inlet)

@@ -79,6 +79,7 @@ class SparseIndex:
     bc_map_fluid: np.ndarray         # (n_fluid,) uint8 — BC type per fluid cell
     outlet_mask: np.ndarray          # (n_fluid,) bool — True for outlet cells
     outlet_upstream: np.ndarray      # (n_fluid,) int32 — fluid idx of upstream cell (valid only at outlets)
+    phi_wall_nbr8: np.ndarray | None = None  # optional per-link wall φ for wetting overrides
 
 
 @dataclass
