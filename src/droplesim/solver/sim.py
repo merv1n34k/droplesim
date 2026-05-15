@@ -307,6 +307,19 @@ def _grad(field, nbr8, nbr8_solid, wall_value=1.0):
     return dfdx, dfdy
 
 
+def _upwind_grad(field, ux, uy, nbr4, nbr4_solid):
+    """Monotone first-order gradient for advecting bounded phase fields."""
+    f_nbr = field[nbr4]
+    # No fluid advects out of solid walls, so solid-side phase advection uses a
+    # zero-gradient ghost instead of the wetting ghost used by capillary terms.
+    f_nbr = jnp.where(nbr4_solid, field, f_nbr)
+
+    east, west, north, south = f_nbr
+    dfdx = jnp.where(ux >= 0.0, field - west, east - field)
+    dfdy = jnp.where(uy >= 0.0, field - south, north - field)
+    return dfdx, dfdy
+
+
 def _divergence(fx, fy, nbr8, nbr8_solid, wall_value_x=0.0, wall_value_y=0.0):
     """∇·F = ∂Fx/∂x + ∂Fy/∂y using D2Q9-weighted stencil."""
     fx_nbr = fx[nbr8]
@@ -328,8 +341,13 @@ def _chemical_potential(phi, kappa, beta, nbr8, nbr8_solid, phi_wall=1.0):
     return mu
 
 
-def _allen_cahn_step(phi, ux, uy, mu, mobility, nbr8, nbr8_solid,
-                     phi_wall=1.0, interface_width=4):
+def _snap_bulk_phase(phi, tol=1e-4):
+    """Keep numerically pure phases exactly pure without touching interfaces."""
+    return jnp.where(phi >= 1.0 - tol, 1.0, jnp.where(phi <= tol, 0.0, phi))
+
+
+def _allen_cahn_step(phi, ux, uy, mu, mobility, nbr4, nbr4_solid,
+                     nbr8, nbr8_solid, phi_wall=1.0, interface_width=4):
     """Bounded phase-field update.
 
     ∂φ/∂t + u·∇φ = M∇²μ
@@ -337,15 +355,16 @@ def _allen_cahn_step(phi, ux, uy, mu, mobility, nbr8, nbr8_solid,
     The explicit update is clipped for boundedness and then corrected for the
     clipping drift before inlet/outlet phase BCs are applied.
     """
-    # Advect the order parameter with the local velocity. The pressure LBM is
-    # weakly compressible, so using ∇·(φu) injects ∇·u into the phase transport.
-    dphidx, dphidy = _grad(phi, nbr8, nbr8_solid, wall_value=phi_wall)
+    # Advect the order parameter with a monotone upwind stencil. Centered
+    # advection creates small opposite-phase oscillations at high inlet velocity.
+    dphidx, dphidy = _upwind_grad(phi, ux, uy, nbr4, nbr4_solid)
     adv = ux * dphidx + uy * dphidy
 
     # Chemical-potential diffusion (mu wall_value=0: φ=1 double-well minimum).
     diff = mobility * _laplacian(mu, nbr8, nbr8_solid, wall_value=0.0)
 
     phi_new = jnp.clip(phi - adv + diff, 0.0, 1.0)
+    phi_new = _snap_bulk_phase(phi_new)
 
     # Correct numerical clipping drift on the diffuse interface only. Distributing
     # this over pure bulk lets inlet/outlet phase BCs erase mass in open channels.
@@ -360,7 +379,7 @@ def _allen_cahn_step(phi, ux, uy, mu, mobility, nbr8, nbr8_solid,
     capacity = capacity * interface_weight
     capacity_sum = jnp.clip(capacity.sum(), 1e-30, None)
     phi_new = phi_new + mass_err * capacity / capacity_sum
-    return jnp.clip(phi_new, 0.0, 1.0)
+    return _snap_bulk_phase(jnp.clip(phi_new, 0.0, 1.0))
 
 
 def _surface_tension_force(phi, mu, nbr8, nbr8_solid, phi_wall=1.0):
@@ -830,6 +849,7 @@ class TwoPhaseSim:
         mu = _chemical_potential(phi, kappa_loc, beta_loc,
                                  self.nbr8, self.nbr8_solid, self.phi_wall_nbr8)
         phi = _allen_cahn_step(phi, ux_c, uy_c, mu, u.mobility,
+                               self.nbr4, self.nbr4_solid,
                                self.nbr8, self.nbr8_solid, self.phi_wall_nbr8,
                                interface_width=u.interface_width)
 

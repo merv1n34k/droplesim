@@ -5,7 +5,7 @@ from droplesim.solver.geometry2d import BC_OUTLET, BCSpec, Geometry2D, build_spa
 from droplesim.solver.sim import PhysParams, TwoPhaseSim
 
 
-def test_aqueous_droplet_integrity_in_pressure_driven_oil_channel():
+def _straight_oil_channel(pressure_mbar: float = 5.0):
     nx, ny = 180, 48
     solid_mask = np.ones((ny, nx), dtype=bool)
     solid_mask[1:-1, 1:-1] = False
@@ -13,7 +13,10 @@ def test_aqueous_droplet_integrity_in_pressure_driven_oil_channel():
     bc_map[1:-1, 1] = 1
     bc_map[1:-1, -2] = BC_OUTLET
 
-    inlet = BCSpec("oil_inlet", "inlet", 0.0, 0.0, 5.0, ny, phi=1.0, pressure_mbar=5.0)
+    inlet = BCSpec(
+        "oil_inlet", "inlet", 0.0, 0.0, 5.0, ny, phi=1.0,
+        pressure_mbar=pressure_mbar,
+    )
     inlet.type_id = 1
     outlet = BCSpec("outlet", "outlet", nx - 5.0, 0.0, nx, ny, outlet_bc="pressure")
     outlet.type_id = BC_OUTLET
@@ -33,6 +36,26 @@ def test_aqueous_droplet_integrity_in_pressure_driven_oil_channel():
         sigma=6e-3,
         contact_angle_deg=150.0,
     )
+    return geom, phys
+
+
+def test_high_pressure_oil_inlet_does_not_seed_aqueous_phase():
+    geom, phys = _straight_oil_channel(pressure_mbar=1000.0)
+    sim = TwoPhaseSim(geom, phys)
+
+    f, phi = sim.init_state()
+    for _ in range(1000):
+        f, phi = sim.step(f, phi)
+
+    phi_np = np.asarray(phi)
+    assert float(phi_np.min()) == 1.0
+    assert float((1.0 - phi_np).sum()) == 0.0
+
+
+def test_aqueous_droplet_integrity_in_pressure_driven_oil_channel():
+    geom, phys = _straight_oil_channel()
+    solid_mask = geom.solid_mask
+    ny, nx = geom.shape
     sim = TwoPhaseSim(geom, phys)
 
     yy, xx = np.mgrid[:ny, :nx]
