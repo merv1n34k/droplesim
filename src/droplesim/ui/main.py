@@ -478,6 +478,12 @@ class MainWindow(QMainWindow):
                 log.info("  dt=%.3e s, dx=%.3e m, sigma_lbm=%.3e, kappa=%.3e, beta=%.3e",
                          sim.units.dt, sim.units.dx, sim.units.sigma_lbm,
                          sim.units.kappa, sim.units.beta)
+                if sim.units.pressure_scale < 1.0:
+                    log.warning(
+                        "  pressure drive capped for LBM stability: scale=%.4f "
+                        "(effective pressure = requested × scale)",
+                        sim.units.pressure_scale,
+                    )
                 u_scale = sim.units.dt / sim.units.dx
                 log.info("  u_scale=%.4e, phi_wall=%.4f (contact_angle=%.1f°)",
                          u_scale, sim.phi_wall, phys.contact_angle_deg)
