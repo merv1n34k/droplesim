@@ -651,6 +651,15 @@ class TwoPhaseSim:
 
         # Outlet BC mode (use first outlet spec's settings, default to Neumann)
         outlet_specs = geometry.outlet_specs()
+        outlet_modes = {
+            (spec.outlet_bc, spec.rho_target if spec.outlet_bc == "pressure" else 1.0)
+            for spec in outlet_specs
+        }
+        if len(outlet_modes) > 1:
+            raise ValueError(
+                "Mixed outlet boundary conditions are not supported by the current "
+                "single-code outlet map. Use matching outlet type/rho_target values."
+            )
         if outlet_specs and outlet_specs[0].outlet_bc == "pressure":
             self.outlet_pressure = True
             self.rho_target = outlet_specs[0].rho_target
