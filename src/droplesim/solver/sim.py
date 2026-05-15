@@ -27,7 +27,7 @@ Streaming and neighbor access use pre-computed index arrays from SparseIndex.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 import jax
@@ -104,6 +104,7 @@ class LBMUnits:
     kappa_ve_lu: float = 0.0
     tau_d_solvent: float = 0.0   # τ_d using solvent-only viscosity
     viscoelastic_enabled: bool = False
+    pressure_scale: float = 1.0  # 1.0 = requested pressure maps directly to LU
 
 
 def convert_units(
@@ -624,8 +625,8 @@ class TwoPhaseSim:
         # Pre-compute inlet data in LU: pressure → rho_lbm
         # Direct: delta_rho = 3 * P_Pa / (rho_phys * (dx/dt)^2)
         # Physical pressures (hundreds of mbar) give delta_rho >> 0.01,
-        # violating the low-Mach constraint.  We cap delta_rho_max and
-        # rescale σ_lbm by the same factor so that Ca = μu/σ is preserved.
+        # violating the low-Mach constraint.  We cap only the lattice pressure
+        # drive; material properties stay tied to the physical parameters.
         dx_m = self.units.dx
         dt_s = self.units.dt
         rho_phys = phys.rho_c
@@ -640,16 +641,10 @@ class TwoPhaseSim:
         drho_max = max(drho_phys) if drho_phys else 0.0
         if drho_max > delta_rho_max:
             alpha = delta_rho_max / drho_max  # < 1
-            # Rescale σ so Ca = μu/σ is preserved (u scales by alpha)
-            from dataclasses import replace as _dc_replace
-            self.units = _dc_replace(
-                self.units,
-                sigma_lbm=self.units.sigma_lbm * alpha,
-                kappa=self.units.kappa * alpha,
-                beta=self.units.beta * alpha,
-            )
+            self.units = replace(self.units, pressure_scale=alpha)
         else:
             alpha = 1.0
+            self.units = replace(self.units, pressure_scale=alpha)
         for spec, drho in zip(inlet_specs, drho_phys):
             rho_in = 1.0 + drho * alpha
             self.inlet_data.append((spec.type_id, spec.phi, rho_in))
