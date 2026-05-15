@@ -20,7 +20,7 @@
     "tau_d": 0.55,
     "sigma": 0.001,
     "interface_width_dx": 4,
-    "mobility": 0.1,
+    "mobility": 0.01,
     "n_steps": 5000,
     "convergence_check_interval": 200,
     "vtk_interval": 0,
@@ -32,7 +32,7 @@
   },
   "fixed_params": {
     "tau_c": 0.55, "tau_d": 0.55, "sigma": 0.001,
-    "interface_width_dx": 4, "mobility": 0.1,
+    "interface_width_dx": 4, "mobility": 0.01,
     "n_steps": 5000, "vtk_interval": 0, "hdf5_interval": 0,
     "geometry_type": "box", "nx": 64, "ny": 64, "nz": 64
   },

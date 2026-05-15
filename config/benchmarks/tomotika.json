@@ -19,7 +19,7 @@
     "phi_outside": 1.0
   },
   "fixed_params": {
-    "sigma": 0.001, "interface_width_dx": 4, "mobility": 0.1,
+    "sigma": 0.001, "interface_width_dx": 4, "mobility": 0.01,
     "n_steps": 20000, "measurement_interval": 100,
     "vtk_interval": 500, "hdf5_interval": 0,
     "geometry_type": "box", "nx": 256, "ny": 64, "nz": 64

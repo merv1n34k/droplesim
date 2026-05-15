@@ -130,7 +130,7 @@ class ParamsPanel(QWidget):
         adv_lay.addLayout(iw_row)
 
         self._mobility = self._add_spin(
-            adv_lay, "Mobility:", 0.01, 1.0, 0.1, 0.01, decimals=3
+            adv_lay, "Mobility:", 0.001, 1.0, 0.01, 0.001, decimals=3
         )
 
         drho_row = QHBoxLayout()
@@ -358,7 +358,7 @@ class ParamsPanel(QWidget):
         s = state.simulation
         self._tau_c.setValue(s.get("tau_c", 0.55))
         self._iw.setValue(s.get("interface_width", 4))
-        self._mobility.setValue(s.get("mobility", 0.1))
+        self._mobility.setValue(s.get("mobility", 0.01))
         self._delta_rho_max.setValue(s.get("delta_rho_max", 0.005))
         self._emit_interval.setValue(s.get("emit_interval", 50))
         self._history_frames.setValue(s.get("history_frames", 1000))

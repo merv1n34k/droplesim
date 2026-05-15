@@ -23,7 +23,7 @@ def test_static_droplet_preserves_phase_mass_after_clipping():
         rho_d=1015.0,
         sigma=6e-3,
     )
-    sim = TwoPhaseSim(geom, phys, mobility=0.1)
+    sim = TwoPhaseSim(geom, phys)
 
     yy, xx = np.mgrid[:ny, :nx]
     radius = np.sqrt((xx - nx / 2) ** 2 + (yy - ny / 2) ** 2)

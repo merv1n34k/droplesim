@@ -118,7 +118,7 @@ def convert_units(
     dx_um: float,
     tau_c: float = 0.55,
     interface_width: int = 4,
-    mobility: float = 0.1,
+    mobility: float = 0.01,
 ) -> LBMUnits:
     dx = dx_um * 1e-6  # m
     nu_c = phys.mu_c / phys.rho_c        # kinematic viscosity [m²/s]
@@ -330,26 +330,34 @@ def _chemical_potential(phi, kappa, beta, nbr8, nbr8_solid, phi_wall=1.0):
 
 def _allen_cahn_step(phi, ux, uy, mu, mobility, nbr8, nbr8_solid,
                      phi_wall=1.0, interface_width=4):
-    """Conservative Allen-Cahn step.
+    """Bounded phase-field update.
 
-    ∂φ/∂t + ∇·(φu) = M∇²μ
+    ∂φ/∂t + u·∇φ = M∇²μ
 
     The explicit update is clipped for boundedness and then corrected for the
     clipping drift before inlet/outlet phase BCs are applied.
     """
-    # Conservative advection: ∇·(φu)
-    adv = _divergence(phi * ux, phi * uy, nbr8, nbr8_solid)
+    # Advect the order parameter with the local velocity. The pressure LBM is
+    # weakly compressible, so using ∇·(φu) injects ∇·u into the phase transport.
+    dphidx, dphidy = _grad(phi, nbr8, nbr8_solid, wall_value=phi_wall)
+    adv = ux * dphidx + uy * dphidy
 
     # Chemical-potential diffusion (mu wall_value=0: φ=1 double-well minimum).
     diff = mobility * _laplacian(mu, nbr8, nbr8_solid, wall_value=0.0)
 
     phi_new = jnp.clip(phi - adv + diff, 0.0, 1.0)
 
-    # Correct numerical clipping drift before inlet/outlet phase BCs are applied.
+    # Correct numerical clipping drift on the diffuse interface only. Distributing
+    # this over pure bulk lets inlet/outlet phase BCs erase mass in open channels.
     mass_err = phi.sum() - phi_new.sum()
     add_capacity = jnp.clip(1.0 - phi_new, 0.0, None)
     remove_capacity = jnp.clip(phi_new, 0.0, None)
+    interface_weight = jnp.maximum(
+        4.0 * phi * (1.0 - phi),
+        4.0 * phi_new * (1.0 - phi_new),
+    )
     capacity = jnp.where(mass_err > 0.0, add_capacity, remove_capacity)
+    capacity = capacity * interface_weight
     capacity_sum = jnp.clip(capacity.sum(), 1e-30, None)
     phi_new = phi_new + mass_err * capacity / capacity_sum
     return jnp.clip(phi_new, 0.0, 1.0)
@@ -602,7 +610,7 @@ class TwoPhaseSim:
         phys: PhysParams,
         tau_c: float = 0.55,
         interface_width: int = 4,
-        mobility: float = 0.1,
+        mobility: float = 0.01,
         delta_rho_max: float = 0.005,
     ):
         self.geom = geometry

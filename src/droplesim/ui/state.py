@@ -55,7 +55,7 @@ class SessionState:
     simulation: dict = field(default_factory=lambda: {
         "tau_c": 0.55,
         "interface_width": 4,
-        "mobility": 0.1,
+        "mobility": 0.01,
         "emit_interval": 50,
     })
     timestamp: str = ""

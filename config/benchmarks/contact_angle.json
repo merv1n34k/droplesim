@@ -23,7 +23,7 @@
     "sigma": 0.001,
     "contact_angle_deg": 150,
     "interface_width_dx": 4,
-    "mobility": 0.1,
+    "mobility": 0.01,
     "n_steps": 10000,
     "convergence_check_interval": 200,
     "vtk_interval": 500,
@@ -35,7 +35,7 @@
   },
   "fixed_params": {
     "tau_c": 0.55, "tau_d": 0.55, "sigma": 0.001,
-    "contact_angle_deg": 150, "interface_width_dx": 4, "mobility": 0.1,
+    "contact_angle_deg": 150, "interface_width_dx": 4, "mobility": 0.01,
     "n_steps": 10000, "vtk_interval": 500, "hdf5_interval": 0,
     "geometry_type": "box", "nx": 128, "ny": 128, "nz": 64
   },
