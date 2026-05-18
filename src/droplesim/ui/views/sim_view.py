@@ -123,7 +123,7 @@ class SimView(QWidget):
         self._phi_field = FieldPlot("phi", _PHI_CMAP)
         self._vel_field = FieldPlot("|u|", _VEL_CMAP)
         self._prs_field = FieldPlot("\u0394\u03c1", _PRS_CMAP)
-        self._psi_field = FieldPlot("psi", _PSI_CMAP)
+        self._psi_field = FieldPlot("theta", _PSI_CMAP)
         self._stress_field = FieldPlot("tr(A)", _STRESS_CMAP)
 
         self._fields = [
@@ -291,10 +291,9 @@ class SimView(QWidget):
             self._prs_field.update(dev, vmin=-amp, vmax=amp)
 
         # Surfactant
-        psi = extra.get("psi") if extra else None
-        if self._chk_surfactant.isChecked() and psi is not None:
-            psi_max = float(psi.max()) or 1.0
-            self._psi_field.update(psi, vmin=0.0, vmax=psi_max)
+        theta = extra.get("theta") if extra else None
+        if self._chk_surfactant.isChecked() and theta is not None:
+            self._psi_field.update(theta, vmin=0.0, vmax=1.0)
 
         # Polymer stress: tr(A) - 2
         A_xx = extra.get("A_xx") if extra else None

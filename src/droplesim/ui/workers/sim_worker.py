@@ -133,6 +133,9 @@ class SimWorker(QThread):
                 extra = {}
                 if psi is not None:
                     extra["psi"] = np.asarray(psi)
+                    theta, sigma_local = sim.surfactant_fields(psi)
+                    extra["theta"] = np.asarray(theta)
+                    extra["sigma_local"] = np.asarray(sigma_local)
                 if A_xx is not None:
                     extra["A_xx"] = np.asarray(A_xx)
                     extra["A_xy"] = np.asarray(A_xy)
