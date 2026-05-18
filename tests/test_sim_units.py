@@ -1,7 +1,14 @@
 import numpy as np
 
 from droplesim.solver.geometry2d import BC_OUTLET, BCSpec, Geometry2D, build_sparse_maps
-from droplesim.solver.sim import PhysParams, TwoPhaseSim, contact_angle_to_phi_wall, convert_units
+from droplesim.solver.sim import (
+    PhysParams,
+    TwoPhaseSim,
+    _sigma_local,
+    _surfactant_coverage,
+    contact_angle_to_phi_wall,
+    convert_units,
+)
 
 
 def test_convert_units_keeps_viscosity_ratio_in_tau_d():
@@ -95,3 +102,78 @@ def test_mixed_outlet_conditions_fail_fast():
         assert "Mixed outlet boundary conditions" in str(exc)
     else:
         raise AssertionError("mixed outlet boundary conditions should fail fast")
+
+
+def test_surfactant_units_include_floor():
+    phys = PhysParams(
+        mu_c=1.24e-3,
+        mu_d=1.2e-3,
+        rho_c=1614.0,
+        rho_d=1015.0,
+        sigma=50e-3,
+        D_s=1e-10,
+        D_bulk=5e-10,
+        psi_inf=3e-6,
+        E0=0.2,
+        k_a=10.0,
+        k_d=0.1,
+        C_inlet=0.1,
+        sigma_floor=3e-3,
+        surfactant_initial_coverage=0.85,
+    )
+
+    units = convert_units(phys, dx_um=2.5, tau_c=0.55)
+
+    assert units.surfactant_enabled
+    assert units.sigma_floor_lbm > 0.0
+    assert units.sigma_floor_lbm < units.sigma_lbm
+    assert units.surfactant_initial_coverage == 0.85
+
+
+def test_surfactant_coverage_and_sigma_are_bounded():
+    psi_inf = 2.0
+    psi = np.array([0.0, 0.5, 1.0, 3.0])
+
+    theta = np.asarray(_surfactant_coverage(psi, psi_inf))
+    sigma = np.asarray(_sigma_local(psi, 10.0, 0.2, psi_inf, sigma_floor_lbm=3.0))
+
+    assert np.all(theta >= 0.0)
+    assert np.all(theta <= 0.999)
+    assert np.all(sigma >= 3.0)
+    assert sigma[0] > sigma[1] > sigma[2]
+    assert sigma[-1] == 3.0
+
+
+def test_initial_surfactant_coverage_seeds_droplet_interface():
+    solid = np.ones((24, 24), dtype=bool)
+    solid[1:-1, 1:-1] = False
+    bc_map = np.zeros_like(solid, dtype=np.uint8)
+    geom = Geometry2D(
+        solid_mask=solid,
+        bc_map=bc_map,
+        specs=[],
+        dx_um=2.5,
+        origin_um=(0.0, 0.0),
+        sparse=build_sparse_maps(solid, bc_map),
+    )
+    phys = PhysParams(
+        mu_c=1.24e-3,
+        mu_d=1.2e-3,
+        rho_c=1614.0,
+        rho_d=1015.0,
+        sigma=6e-3,
+        D_s=1e-10,
+        psi_inf=3e-6,
+        surfactant_initial_coverage=0.8,
+    )
+    yy, xx = np.mgrid[:24, :24]
+    dist = np.hypot(xx - 12.0, yy - 12.0)
+    phi_init = 1.0 - 0.5 * (1.0 - np.tanh((dist - 5.0) / 1.2))
+
+    sim = TwoPhaseSim(geom, phys)
+    _f, _phi, psi, _C = sim.init_state(phi_init=phi_init)
+    theta = np.asarray(_surfactant_coverage(psi, sim.units.psi_inf_lu))
+
+    assert float(np.asarray(psi).sum()) > 0.0
+    assert theta.max() <= 0.8 + 1e-12
+    assert theta.max() > 0.5

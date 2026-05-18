@@ -76,6 +76,8 @@ class PhysParams:
     k_a: float | None = None        # adsorption rate, m³/(mol·s)
     k_d: float | None = None        # desorption rate, 1/s
     C_inlet: float | None = None    # inlet bulk concentration, mol/m³
+    sigma_floor: float | None = None  # minimum surfactant-lowered tension, N/m
+    surfactant_initial_coverage: float = 0.0  # initial Γ/Γmax on seeded interfaces
     # Viscoelastic (all None = disabled, disperse phase only)
     lambda_p: float | None = None   # polymer relaxation time, s
     mu_p: float | None = None       # polymer viscosity contribution, Pa·s
@@ -102,6 +104,8 @@ class LBMUnits:
     k_a_lu: float = 0.0
     k_d_lu: float = 0.0
     C_inlet_lu: float = 0.0
+    sigma_floor_lbm: float = 0.0
+    surfactant_initial_coverage: float = 0.0
     surfactant_enabled: bool = False
     # Viscoelastic LU (0.0 when disabled)
     lambda_p_lu: float = 0.0
@@ -152,11 +156,19 @@ def convert_units(
     k_a_lu = 0.0
     k_d_lu = 0.0
     C_inlet_lu = 0.0
+    sigma_floor_lbm = 0.0
+    surf_initial_coverage = 0.0
     if surf_enabled:
         D_s_lu = phys.D_s * dt / dx**2
         D_bulk_lu = (phys.D_bulk or phys.D_s) * dt / dx**2
         psi_inf_lu = phys.psi_inf * dx**2
         E0 = phys.E0 or 0.0
+        sigma_floor_lbm = (
+            phys.sigma_floor * dt**2 / (phys.rho_c * dx**3)
+            if phys.sigma_floor is not None
+            else 0.0
+        )
+        surf_initial_coverage = float(np.clip(phys.surfactant_initial_coverage, 0.0, 0.999))
         if phys.k_a is not None:
             # k_a [m³/(mol·s)] → LU: k_a * (dt / dx³) * (mol_scale)
             # With psi_inf_lu = psi_inf * dx², concentration C [mol/m³]:
@@ -205,6 +217,8 @@ def convert_units(
         k_a_lu=k_a_lu,
         k_d_lu=k_d_lu,
         C_inlet_lu=C_inlet_lu,
+        sigma_floor_lbm=sigma_floor_lbm,
+        surfactant_initial_coverage=surf_initial_coverage,
         surfactant_enabled=surf_enabled,
         lambda_p_lu=lambda_p_lu,
         mu_p_lu=mu_p_lu,
@@ -320,6 +334,31 @@ def _upwind_grad(field, ux, uy, nbr4, nbr4_solid):
     return dfdx, dfdy
 
 
+def _advect_upwind(field, ux, uy, nbr4, nbr4_solid):
+    dfdx, dfdy = _upwind_grad(field, ux, uy, nbr4, nbr4_solid)
+    return field - (ux * dfdx + uy * dfdy)
+
+
+def _local_bounds(field, nbr4, nbr4_solid):
+    f_nbr = field[nbr4]
+    f_nbr = jnp.where(nbr4_solid, field, f_nbr)
+    stencil = jnp.concatenate([field[None], f_nbr], axis=0)
+    return stencil.min(axis=0), stencil.max(axis=0)
+
+
+def _advect_phase(field, ux, uy, nbr4, nbr4_solid):
+    """Bounded BFECC/MacCormack advection for sharper phase transport."""
+    lo, hi = _local_bounds(field, nbr4, nbr4_solid)
+
+    forward = _advect_upwind(field, ux, uy, nbr4, nbr4_solid)
+    backward = _advect_upwind(forward, -ux, -uy, nbr4, nbr4_solid)
+    corrected = field + 0.5 * (field - backward)
+    corrected = jnp.clip(corrected, lo, hi)
+
+    advected = _advect_upwind(corrected, ux, uy, nbr4, nbr4_solid)
+    return jnp.clip(advected, lo, hi)
+
+
 def _divergence(fx, fy, nbr8, nbr8_solid, wall_value_x=0.0, wall_value_y=0.0):
     """∇·F = ∂Fx/∂x + ∂Fy/∂y using D2Q9-weighted stencil."""
     fx_nbr = fx[nbr8]
@@ -346,24 +385,44 @@ def _snap_bulk_phase(phi, tol=1e-4):
     return jnp.where(phi >= 1.0 - tol, 1.0, jnp.where(phi <= tol, 0.0, phi))
 
 
-def _allen_cahn_step(phi, ux, uy, mu, mobility, nbr4, nbr4_solid,
-                     nbr8, nbr8_solid, phi_wall=1.0, interface_width=4):
-    """Bounded phase-field update.
+def _interface_compression(phi, strength, nbr8, nbr8_solid, phi_wall=1.0):
+    """Conservative interface compression: -∇·[C φ(1-φ)n]."""
+    dphidx, dphidy = _grad(phi, nbr8, nbr8_solid, wall_value=phi_wall)
+    grad_mag = jnp.sqrt(dphidx**2 + dphidy**2)
+    active = grad_mag > 1e-12
+    nx = jnp.where(active, dphidx / grad_mag, 0.0)
+    ny = jnp.where(active, dphidy / grad_mag, 0.0)
 
-    ∂φ/∂t + u·∇φ = M∇²μ
+    interface = phi * (1.0 - phi)
+    flux_x = strength * interface * nx
+    flux_y = strength * interface * ny
+    return -_divergence(flux_x, flux_y, nbr8, nbr8_solid)
 
-    The explicit update is clipped for boundedness and then corrected for the
-    clipping drift before inlet/outlet phase BCs are applied.
+
+def _allen_cahn_step(phi, ux, uy, mobility, nbr4, nbr4_solid,
+                     nbr8, nbr8_solid, phi_wall=1.0,
+                     interface_width=4):
+    """Conservative Allen-Cahn phase-field update.
+
+    ∂φ/∂t + u·∇φ = ∇·[ M·(∇φ − (4φ(1-φ)/W)·n) ]
+                  = M·∇²φ − ∇·[ (4M/W)·φ(1-φ)·n ]
+
+    Ref: Chiu & Lin (2011), Geier et al. (2015), Fakhari et al. (2017).
     """
-    # Advect the order parameter with a monotone upwind stencil. Centered
-    # advection creates small opposite-phase oscillations at high inlet velocity.
-    dphidx, dphidy = _upwind_grad(phi, ux, uy, nbr4, nbr4_solid)
-    adv = ux * dphidx + uy * dphidy
+    # Advect with a bounded MacCormack correction.
+    phi_adv = _advect_phase(phi, ux, uy, nbr4, nbr4_solid)
 
-    # Chemical-potential diffusion (mu wall_value=0: φ=1 double-well minimum).
-    diff = mobility * _laplacian(mu, nbr8, nbr8_solid, wall_value=0.0)
+    # Diffusion: M·∇²φ  (2nd order, NOT ∇²μ)
+    diff = mobility * _laplacian(phi_adv, nbr8, nbr8_solid, phi_wall)
 
-    phi_new = jnp.clip(phi - adv + diff, 0.0, 1.0)
+    # Compression/sharpening: −∇·[(4M/W)·φ(1-φ)·n]
+    # Strength = 4M/W (coupled to mobility per Geier et al. 2015 Eq. 3)
+    compress = _interface_compression(
+        phi_adv, 4.0 * mobility / float(interface_width),
+        nbr8, nbr8_solid, phi_wall,
+    )
+
+    phi_new = jnp.clip(phi_adv + diff + compress, 0.0, 1.0)
     phi_new = _snap_bulk_phase(phi_new)
 
     # Correct numerical clipping drift on the diffuse interface only. Distributing
@@ -377,9 +436,10 @@ def _allen_cahn_step(phi, ux, uy, mu, mobility, nbr4, nbr4_solid,
     )
     capacity = jnp.where(mass_err > 0.0, add_capacity, remove_capacity)
     capacity = capacity * interface_weight
-    capacity_sum = jnp.clip(capacity.sum(), 1e-30, None)
-    phi_new = phi_new + mass_err * capacity / capacity_sum
-    return _snap_bulk_phase(jnp.clip(phi_new, 0.0, 1.0))
+    capacity_sum = capacity.sum()
+    corrected = phi_new + mass_err * capacity / jnp.clip(capacity_sum, 1e-30, None)
+    phi_new = jnp.where(capacity_sum > 1e-12, corrected, phi_new)
+    return jnp.clip(phi_new, 0.0, 1.0)
 
 
 def _surface_tension_force(phi, mu, nbr8, nbr8_solid, phi_wall=1.0):
@@ -390,12 +450,17 @@ def _surface_tension_force(phi, mu, nbr8, nbr8_solid, phi_wall=1.0):
 
 # ── Surfactant transport + Marangoni ───────────────────────────────────────
 
-def _sigma_local(phi, psi, sigma_lbm, E0, psi_inf_lu):
-    """Langmuir equation of state: σ(ψ) = σ₀·[1 + E₀·ln(1 - ψ/ψ_inf)].
-    Returns per-node σ. Active only at interface (|∇φ|>0 region)."""
-    ratio = jnp.clip(psi / psi_inf_lu, 0.0, 0.999)
+
+def _surfactant_coverage(psi, psi_inf_lu):
+    """Surface coverage θ = ψ / Γ_max, clipped to the Langmuir range."""
+    return jnp.clip(psi / jnp.clip(psi_inf_lu, 1e-30, None), 0.0, 0.999)
+
+
+def _sigma_local(psi, sigma_lbm, E0, psi_inf_lu, sigma_floor_lbm=0.0):
+    """Langmuir equation of state: σ(θ) = σ₀·[1 + E₀·ln(1 - θ)]."""
+    ratio = _surfactant_coverage(psi, psi_inf_lu)
     sigma = sigma_lbm * (1.0 + E0 * jnp.log(1.0 - ratio))
-    return jnp.clip(sigma, 0.0, sigma_lbm * 10.0)
+    return jnp.clip(sigma, sigma_floor_lbm, sigma_lbm * 10.0)
 
 
 def _surfactant_step(psi, ux, uy, phi, D_s_lu, nbr8, nbr8_solid, phi_wall=1.0):
@@ -754,6 +819,24 @@ class TwoPhaseSim:
                 np.asarray(self.fluid_y), np.asarray(self.fluid_x)
             ]
             phi = jnp.array(phi_sparse)
+            if (
+                self.surfactant_enabled
+                and self.units.surfactant_initial_coverage > 0.0
+                and self.units.psi_inf_lu > 0.0
+            ):
+                gy, gx = np.gradient(phi_dense)
+                grad_indicator = np.hypot(gx, gy)
+                grad_indicator /= max(float(grad_indicator.max()), 1e-30)
+                mix_indicator = 4.0 * phi_dense * (1.0 - phi_dense)
+                interface_indicator = np.clip(
+                    np.maximum(grad_indicator, mix_indicator), 0.0, 1.0
+                )
+                psi_sparse = (
+                    self.units.psi_inf_lu
+                    * self.units.surfactant_initial_coverage
+                    * interface_indicator[np.asarray(self.fluid_y), np.asarray(self.fluid_x)]
+                )
+                psi = jnp.array(psi_sparse)
         surf = self.surfactant_enabled
         ve = self.viscoelastic_enabled
         if surf and ve:
@@ -793,7 +876,9 @@ class TwoPhaseSim:
 
         # 2-3. Local σ → local κ, β (surfactant modulates interface energy)
         if u.surfactant_enabled:
-            sig_loc = _sigma_local(psi, psi, u.sigma_lbm, u.E0, u.psi_inf_lu)
+            sig_loc = _sigma_local(
+                psi, u.sigma_lbm, u.E0, u.psi_inf_lu, u.sigma_floor_lbm
+            )
             W_lu = float(u.interface_width)
             kappa_loc = 1.5 * sig_loc * W_lu
             beta_loc = 12.0 * sig_loc / W_lu
@@ -845,12 +930,11 @@ class TwoPhaseSim:
             rho_target=self.rho_target,
         )
 
-        # 13. Allen-Cahn phase-field update (recompute μ with potentially local κ,β)
-        mu = _chemical_potential(phi, kappa_loc, beta_loc,
-                                 self.nbr8, self.nbr8_solid, self.phi_wall_nbr8)
-        phi = _allen_cahn_step(phi, ux_c, uy_c, mu, u.mobility,
+        # 13. Allen-Cahn phase-field update (conservative AC: uses ∇²φ, not ∇²μ)
+        phi = _allen_cahn_step(phi, ux_c, uy_c, u.mobility,
                                self.nbr4, self.nbr4_solid,
-                               self.nbr8, self.nbr8_solid, self.phi_wall_nbr8,
+                               self.nbr8, self.nbr8_solid,
+                               self.phi_wall_nbr8,
                                interface_width=u.interface_width)
 
         # 14. Phase-field BCs
@@ -919,6 +1003,18 @@ class TwoPhaseSim:
         """Extract (rho, ux, uy) from distributions."""
         return _macroscopic(f)
 
+    def surfactant_fields(self, psi):
+        """Return normalized coverage θ and local σ for a surfactant field."""
+        theta = _surfactant_coverage(psi, self.units.psi_inf_lu)
+        sigma = _sigma_local(
+            psi,
+            self.units.sigma_lbm,
+            self.units.E0,
+            self.units.psi_inf_lu,
+            self.units.sigma_floor_lbm,
+        )
+        return theta, sigma
+
     def run(
         self,
         n_steps: int,
@@ -959,6 +1055,9 @@ class TwoPhaseSim:
         if self.surfactant_enabled:
             result["psi"] = np.asarray(psi)
             result["C"] = np.asarray(C)
+            theta, sigma_local = self.surfactant_fields(psi)
+            result["theta"] = np.asarray(theta)
+            result["sigma_local"] = np.asarray(sigma_local)
         if self.viscoelastic_enabled:
             result["A_xx"] = np.asarray(A_xx)
             result["A_xy"] = np.asarray(A_xy)

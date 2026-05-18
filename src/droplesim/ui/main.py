@@ -1,4 +1,4 @@
-"""QApplication + MainWindow with 4-tab workflow."""
+"""QApplication + MainWindow with 5-tab workflow."""
 
 from __future__ import annotations
 
@@ -35,6 +35,7 @@ from droplesim.ui.frame_buffer import FrameBuffer, FrameRecord
 from droplesim.ui.panels.params_panel import ParamsPanel
 from droplesim.ui.state import SessionState
 from droplesim.ui.views.edge_view import EdgeView
+from droplesim.ui.views.experiment_view import ExperimentView
 from droplesim.ui.views.geometry_view import GeometryView
 from droplesim.ui.views.phase_view import PhaseView
 from droplesim.ui.views.sim_view import SimView
@@ -73,6 +74,7 @@ class MainWindow(QMainWindow):
         root.setSpacing(0)
 
         self._params = ParamsPanel()
+        self._params.setMinimumWidth(320)
         self._params.load_geometry_requested.connect(self._on_load_geometry)
         self._params.channel_depth_changed.connect(self._on_channel_depth_changed)
         self._params.save_config_requested.connect(self._on_save_config)
@@ -93,7 +95,7 @@ class MainWindow(QMainWindow):
         stage_row.setSpacing(1)
 
         self._stage_btns = []
-        stage_labels = ["1. Geometry", "2. Phase", "3. BCs", "4. Simulate"]
+        stage_labels = ["1. Geometry", "2. Phase", "3. BCs", "4. Simulate", "5. Experiment"]
         for i, label in enumerate(stage_labels):
             btn = ui.stage_button(label)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -115,7 +117,7 @@ class MainWindow(QMainWindow):
             collapsible=(False, False),
         )
 
-        # Views — order: Geometry, Phase, BCs, Simulate
+        # Views — order: Geometry, Phase, BCs, Simulate, Experiment
         self._geometry_view = GeometryView()
         self._geometry_view.solid_mask_changed.connect(self._on_solid_mask_changed)
         self._stack.addWidget(self._geometry_view)
@@ -137,7 +139,14 @@ class MainWindow(QMainWindow):
         self._sim_view.export_requested.connect(self._on_export)
         self._stack.addWidget(self._sim_view)
 
-        # Disable stages 2-4 until geometry is loaded
+        self._experiment_view = ExperimentView()
+        self._experiment_view.status_changed.connect(self._set_status)
+        self._stack.addWidget(self._experiment_view)
+        self._experiment_view.set_settings_provider(
+            lambda: (self._build_phys_params(), self._params.simulation_dict())
+        )
+
+        # Disable stages 2-4 until geometry is loaded; experiment is self-contained
         for i in range(1, 4):
             self._stage_btns[i].setEnabled(False)
         self._stage_btns[0].setChecked(True)
@@ -163,6 +172,8 @@ class MainWindow(QMainWindow):
     def _on_stage_clicked(self, idx: int):
         if not self._stage_btns[idx].isEnabled():
             return
+        if idx == 4:
+            self._sync_experiment_settings()
         self._stack.setCurrentIndex(idx)
         for i, btn in enumerate(self._stage_btns):
             btn.setChecked(i == idx)
@@ -408,6 +419,38 @@ class MainWindow(QMainWindow):
             sparse=sparse,
         )
 
+    def _build_phys_params(self) -> PhysParams:
+        p = self._params.physics_dict()
+        surf = p.get("surfactant")
+        ve = p.get("viscoelastic")
+        return PhysParams(
+            mu_c=p["continuous"]["mu_mPas"] * 1e-3,
+            mu_d=p["disperse"]["mu_mPas"] * 1e-3,
+            rho_c=p["continuous"]["rho_kg_m3"],
+            rho_d=p["disperse"]["rho_kg_m3"],
+            sigma=p["interface"]["sigma_mNm"] * 1e-3,
+            contact_angle_deg=p["interface"]["contact_angle_deg"],
+            D_s=surf["D_s"] if surf else None,
+            D_bulk=surf["D_bulk"] if surf else None,
+            psi_inf=surf.get("Gamma_max", surf["psi_inf"]) if surf else None,
+            E0=surf["E0"] if surf else None,
+            k_a=surf["k_a"] if surf else None,
+            k_d=surf["k_d"] if surf else None,
+            C_inlet=surf.get("C_inlet", 0.1) if surf else None,
+            sigma_floor=surf.get("sigma_floor") if surf else None,
+            surfactant_initial_coverage=surf.get("initial_coverage", 0.0)
+            if surf else 0.0,
+            lambda_p=ve["lambda_p"] if ve else None,
+            mu_p=ve["mu_p"] if ve else None,
+            kappa_ve=ve.get("kappa_ve") if ve else None,
+        )
+
+    def _sync_experiment_settings(self):
+        self._experiment_view.set_global_settings(
+            self._build_phys_params(),
+            self._params.simulation_dict(),
+        )
+
     def _on_start(self):
         if self._solid_mask is None:
             QMessageBox.warning(self, "Warning", "Load geometry first.")
@@ -439,27 +482,7 @@ class MainWindow(QMainWindow):
             else:
                 # Fresh start
                 geom = self._build_geometry()
-                p = self._params.physics_dict()
-                surf = p.get("surfactant")
-                ve = p.get("viscoelastic")
-                phys = PhysParams(
-                    mu_c=p["continuous"]["mu_mPas"] * 1e-3,
-                    mu_d=p["disperse"]["mu_mPas"] * 1e-3,
-                    rho_c=p["continuous"]["rho_kg_m3"],
-                    rho_d=p["disperse"]["rho_kg_m3"],
-                    sigma=p["interface"]["sigma_mNm"] * 1e-3,
-                    contact_angle_deg=p["interface"]["contact_angle_deg"],
-                    D_s=surf["D_s"] if surf else None,
-                    D_bulk=surf["D_bulk"] if surf else None,
-                    psi_inf=surf["psi_inf"] if surf else None,
-                    E0=surf["E0"] if surf else None,
-                    k_a=surf["k_a"] if surf else None,
-                    k_d=surf["k_d"] if surf else None,
-                    C_inlet=surf.get("C_inlet", 0.1) if surf else None,
-                    lambda_p=ve["lambda_p"] if ve else None,
-                    mu_p=ve["mu_p"] if ve else None,
-                    kappa_ve=ve.get("kappa_ve") if ve else None,
-                )
+                phys = self._build_phys_params()
                 sim = TwoPhaseSim(
                     geom, phys,
                     tau_c=s["tau_c"],
@@ -522,6 +545,9 @@ class MainWindow(QMainWindow):
                              sim.units.psi_inf_lu, sim.units.E0)
                     log.info("  surfactant: k_a_lu=%.3e k_d_lu=%.3e C_inlet_lu=%.3e",
                              sim.units.k_a_lu, sim.units.k_d_lu, sim.units.C_inlet_lu)
+                    log.info("  surfactant: sigma_floor_lbm=%.3e initial_coverage=%.3f",
+                             sim.units.sigma_floor_lbm,
+                             sim.units.surfactant_initial_coverage)
                 if sim.viscoelastic_enabled:
                     log.info("  viscoelastic: lambda_p_lu=%.2f mu_p_lu=%.3e beta_visc=%.4f",
                              sim.units.lambda_p_lu, sim.units.mu_p_lu, sim.units.beta_visc)
@@ -720,6 +746,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self._keep_alive.stop()
         self._replay_timer.stop()
+        self._experiment_view.shutdown()
         if self._worker is not None:
             log.info("Shutting down — requesting worker stop")
             try:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import dropletui as ui
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -159,30 +160,55 @@ class ParamsPanel(QWidget):
         surf_lay = QVBoxLayout(surf_group)
         surf_lay.setSpacing(ui.Theme.SPACE_2)
 
+        self._surf_preset = ui.combo_box(["PFPE-PEG fluorosurfactant"])
+        preset_row = QHBoxLayout()
+        preset_lbl = QLabel("Preset:")
+        preset_lbl.setMinimumWidth(110)
+        preset_row.addWidget(preset_lbl)
+        preset_row.addWidget(self._surf_preset)
+        surf_lay.addLayout(preset_row)
+
+        self._surf_C_inlet = self._add_spin(
+            surf_lay, "C [mol/m³]:", 0.0, 100.0, 0.1, 0.01, decimals=3
+        )
+        self._surf_initial_coverage = self._add_spin(
+            surf_lay, "Initial coverage:", 0.0, 0.999, 0.85, 0.05, decimals=3
+        )
+
+        surf_expert = QGroupBox("Expert physical parameters")
+        surf_expert.setCheckable(True)
+        surf_expert.setChecked(False)
+        surf_expert_lay = QVBoxLayout(surf_expert)
+        surf_expert_lay.setSpacing(ui.Theme.SPACE_2)
+
         # UI uses scaled units; physics_dict() converts to SI
         # D_s, D_bulk: ×10⁻¹⁰ m²/s (user enters 1.0 → 1e-10 SI)
         self._surf_D_s = self._add_spin(
-            surf_lay, "D_s [e-10 m²/s]:", 0.01, 100.0, 1.0, 0.1, decimals=2
+            surf_expert_lay, "D_s [e-10 m²/s]:", 0.01, 100.0, 1.0, 0.1, decimals=2
         )
         self._surf_D_bulk = self._add_spin(
-            surf_lay, "D_bulk [e-10 m²/s]:", 0.01, 100.0, 5.0, 0.5, decimals=2
+            surf_expert_lay, "D_bulk [e-10 m²/s]:", 0.01, 100.0, 5.0, 0.5, decimals=2
         )
-        # ψ_inf: µmol/m² (user enters 3.0 → 3e-6 SI)
+        # Gamma_max: µmol/m² (user enters 3.0 → 3e-6 SI)
         self._surf_psi_inf = self._add_spin(
-            surf_lay, "ψ_inf [µmol/m²]:", 0.01, 100.0, 3.0, 0.5, decimals=2
+            surf_expert_lay, "Gamma max [µmol/m²]:", 0.01, 100.0, 3.0, 0.5, decimals=2
         )
         self._surf_E0 = self._add_spin(
-            surf_lay, "E₀:", 0.0, 2.0, 0.2, 0.05, decimals=3
+            surf_expert_lay, "E0:", 0.0, 2.0, 0.2, 0.05, decimals=3
         )
         self._surf_k_a = self._add_spin(
-            surf_lay, "k_a [m³/mol·s]:", 0.0, 1000.0, 10.0, 1.0, decimals=2
+            surf_expert_lay, "k_a [m³/mol·s]:", 0.0, 1000.0, 10.0, 1.0, decimals=2
         )
         self._surf_k_d = self._add_spin(
-            surf_lay, "k_d [1/s]:", 0.0, 100.0, 0.1, 0.01, decimals=3
+            surf_expert_lay, "k_d [1/s]:", 0.0, 100.0, 0.1, 0.01, decimals=3
         )
-        self._surf_C_inlet = self._add_spin(
-            surf_lay, "C_inlet [mol/m³]:", 0.0, 100.0, 0.1, 0.01, decimals=3
+        self._surf_sigma_floor = self._add_spin(
+            surf_expert_lay, "sigma floor [mN/m]:", 0.0, 100.0, 3.0, 0.5, decimals=2
         )
+        surf_lay.addWidget(surf_expert)
+        self._surf_expert = surf_expert
+        self._on_surf_expert_toggled(False)
+        surf_expert.toggled.connect(self._on_surf_expert_toggled)
 
         self._surf_group = surf_group
         surf_group.toggled.connect(self._on_surf_toggled)
@@ -241,6 +267,13 @@ class ParamsPanel(QWidget):
 
     def _on_surf_toggled(self, checked: bool):
         for child in self._surf_group.findChildren(QWidget):
+            child.setVisible(checked)
+        self._surf_expert.setVisible(checked)
+        if checked:
+            self._on_surf_expert_toggled(self._surf_expert.isChecked())
+
+    def _on_surf_expert_toggled(self, checked: bool):
+        for child in self._surf_expert.findChildren(QWidget):
             child.setVisible(checked)
 
     def _on_ve_toggled(self, checked: bool):
@@ -305,13 +338,17 @@ class ParamsPanel(QWidget):
         }
         if self._surf_group.isChecked():
             d["surfactant"] = {
+                "preset": "pfpe_peg_fluorinated_oil",
                 "D_s": self._surf_D_s.value() * 1e-10,       # e-10 m²/s → m²/s
                 "D_bulk": self._surf_D_bulk.value() * 1e-10,  # e-10 m²/s → m²/s
-                "psi_inf": self._surf_psi_inf.value() * 1e-6, # µmol/m² → mol/m²
+                "Gamma_max": self._surf_psi_inf.value() * 1e-6, # µmol/m² → mol/m²
+                "psi_inf": self._surf_psi_inf.value() * 1e-6, # legacy alias
                 "E0": self._surf_E0.value(),
                 "k_a": self._surf_k_a.value(),
                 "k_d": self._surf_k_d.value(),
                 "C_inlet": self._surf_C_inlet.value(),
+                "sigma_floor": self._surf_sigma_floor.value() * 1e-3,
+                "initial_coverage": self._surf_initial_coverage.value(),
             }
         if self._ve_group.isChecked():
             d["viscoelastic"] = {
@@ -367,11 +404,14 @@ class ParamsPanel(QWidget):
             self._surf_group.setChecked(True)
             self._surf_D_s.setValue(surf.get("D_s", 1e-10) / 1e-10)      # m²/s → e-10
             self._surf_D_bulk.setValue(surf.get("D_bulk", 5e-10) / 1e-10) # m²/s → e-10
-            self._surf_psi_inf.setValue(surf.get("psi_inf", 3e-6) / 1e-6) # mol/m² → µmol/m²
+            gamma_max = surf.get("Gamma_max", surf.get("psi_inf", 3e-6))
+            self._surf_psi_inf.setValue(gamma_max / 1e-6) # mol/m² → µmol/m²
             self._surf_E0.setValue(surf.get("E0", 0.2))
             self._surf_k_a.setValue(surf.get("k_a", 10.0))
             self._surf_k_d.setValue(surf.get("k_d", 0.1))
             self._surf_C_inlet.setValue(surf.get("C_inlet", 0.1))
+            self._surf_sigma_floor.setValue(surf.get("sigma_floor", 3e-3) / 1e-3)
+            self._surf_initial_coverage.setValue(surf.get("initial_coverage", 0.85))
         else:
             self._surf_group.setChecked(False)
         ve = p.get("viscoelastic")
