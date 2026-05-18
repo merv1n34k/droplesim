@@ -1,7 +1,12 @@
 import numpy as np
 
 from droplesim.solver.geometry2d import Geometry2D, build_sparse_maps
-from droplesim.solver.sim import PhysParams, TwoPhaseSim, _snap_bulk_phase
+from droplesim.solver.sim import (
+    PhysParams,
+    TwoPhaseSim,
+    _disjoining_force,
+    _snap_bulk_phase,
+)
 
 
 def _periodic_geom(ny, nx, dx_um=2.5):
@@ -161,3 +166,58 @@ def test_spurious_currents():
     # Spurious currents should remain bounded (no blowup)
     assert u_max < 0.1, f"Spurious currents too large: u_max={u_max:.4e}"
     assert not np.any(np.isnan(np.asarray(ux)))
+
+
+def test_disjoining_force_zero_in_bulk():
+    """Disjoining force vanishes in uniform bulk when wall matches."""
+    import jax.numpy as jnp
+
+    ny, nx = 16, 16
+    geom = _periodic_geom(ny, nx)
+    nbr8 = jnp.array(geom.sparse.nbr8)
+    nbr8_solid = jnp.array(geom.sparse.nbr8_solid)
+
+    for bulk_val in [0.0, 1.0]:
+        phi = jnp.full(geom.sparse.n_fluid, bulk_val)
+        fx, fy = _disjoining_force(phi, 1.0, nbr8, nbr8_solid, phi_wall=bulk_val)
+        assert float(jnp.abs(fx).max()) < 1e-12
+        assert float(jnp.abs(fy).max()) < 1e-12
+
+
+def test_disjoining_force_repels_approaching_droplets():
+    """Two nearby droplets with ε>0 should not merge over 500 steps."""
+    ny, nx = 64, 128
+    geom = _periodic_geom(ny, nx)
+    phys = PhysParams(
+        mu_c=1.24e-3,
+        mu_d=1.2e-3,
+        rho_c=1614.0,
+        rho_d=1015.0,
+        sigma=6e-3,
+        disjoining_strength=0.5,
+    )
+    sim = TwoPhaseSim(geom, phys, interface_width=4, mobility=0.01)
+
+    yy, xx = np.mgrid[:ny, :nx]
+    cy = ny / 2.0
+    R = 10.0
+    gap = 3.0  # narrow gap between droplets
+    cx1 = nx / 2.0 - R - gap / 2.0
+    cx2 = nx / 2.0 + R + gap / 2.0
+    d1 = np.sqrt((xx - cx1) ** 2 + (yy - cy) ** 2)
+    d2 = np.sqrt((xx - cx2) ** 2 + (yy - cy) ** 2)
+    phi_init = np.ones((ny, nx), dtype=np.float64)
+    phi_init = np.minimum(phi_init, 0.5 * (1.0 + np.tanh(2.0 * (d1 - R) / 4.0)))
+    phi_init = np.minimum(phi_init, 0.5 * (1.0 + np.tanh(2.0 * (d2 - R) / 4.0)))
+
+    f, phi = sim.init_state(phi_init=phi_init)
+    for _ in range(500):
+        f, phi = sim.step(f, phi)
+
+    phi_np = np.asarray(phi)
+    # The gap between droplets should still have oil (phi > 0.5)
+    fy = geom.sparse.fluid_yx[:, 0]
+    fx = geom.sparse.fluid_yx[:, 1]
+    midline = (np.abs(fy - cy) < 2) & (np.abs(fx - nx / 2.0) < 2)
+    assert midline.sum() > 0
+    assert float(phi_np[midline].mean()) > 0.3, "Droplets merged — disjoining force ineffective"

@@ -20,10 +20,10 @@ from droplesim.ui.views.field_plot import FieldPlot
 
 # ── Colormaps ────────────────────────────────────────────────────────────────
 
-# Phase: blue (aqueous=0) -> red (oil=1)
+# Phase: blue (aqueous=0) -> white (oil=1)
 _PHI_CMAP = pg.ColorMap(
     pos=[0.0, 1.0],
-    color=[(52, 152, 219), (231, 76, 60)],
+    color=[(52, 152, 219), (255, 255, 255)],
 )
 # Velocity: viridis-like
 _VEL_CMAP = pg.ColorMap(

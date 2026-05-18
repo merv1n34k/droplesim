@@ -34,7 +34,7 @@ def _straight_oil_channel(pressure_mbar: float = 5.0):
         rho_c=1614.0,
         rho_d=1015.0,
         sigma=6e-3,
-        contact_angle_deg=150.0,
+        contact_angle_deg=180.0,
     )
     return geom, phys
 

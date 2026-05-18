@@ -93,7 +93,10 @@ class ParamsPanel(QWidget):
 
         self._sigma = self._add_spin(intf_lay, "σ [mN/m]:", 0.1, 100.0, 6.0, 0.5)
         self._contact_angle = self._add_spin(
-            intf_lay, "Contact angle [°]:", 90.0, 180.0, 150.0, 1.0
+            intf_lay, "Contact angle [°]:", 90.0, 180.0, 180.0, 1.0
+        )
+        self._disjoining = self._add_spin(
+            intf_lay, "Disjoining ε:", 0.0, 10.0, 0.0, 0.1
         )
 
         layout.addWidget(intf_group)
@@ -334,6 +337,7 @@ class ParamsPanel(QWidget):
             "interface": {
                 "sigma_mNm": self._sigma.value(),
                 "contact_angle_deg": self._contact_angle.value(),
+                "disjoining_strength": self._disjoining.value(),
             },
         }
         if self._surf_group.isChecked():
@@ -391,7 +395,8 @@ class ParamsPanel(QWidget):
         self._mu_disp.setValue(disp.get("mu_mPas", 1.2))
         self._rho_disp.setValue(disp.get("rho_kg_m3", 1015.0))
         self._sigma.setValue(intf.get("sigma_mNm", 6.0))
-        self._contact_angle.setValue(intf.get("contact_angle_deg", 150.0))
+        self._contact_angle.setValue(intf.get("contact_angle_deg", 180.0))
+        self._disjoining.setValue(intf.get("disjoining_strength", 0.0))
         s = state.simulation
         self._tau_c.setValue(s.get("tau_c", 0.55))
         self._iw.setValue(s.get("interface_width", 4))

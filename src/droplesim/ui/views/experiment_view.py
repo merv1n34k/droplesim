@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import time
-from collections import deque
 from dataclasses import dataclass
 from typing import Callable
 
@@ -39,7 +38,7 @@ log = logging.getLogger(__name__)
 
 _PHI_CMAP = pg.ColorMap(
     pos=[0.0, 1.0],
-    color=[(52, 152, 219), (231, 76, 60)],
+    color=[(52, 152, 219), (255, 255, 255)],
 )
 _VEL_CMAP = pg.ColorMap(
     pos=[0.0, 0.25, 0.5, 0.75, 1.0],
@@ -56,14 +55,6 @@ _PRS_CMAP = pg.ColorMap(
     color=[(59, 76, 192), (221, 221, 221), (180, 4, 38)],
 )
 
-_VF_COLORS = [
-    (52, 152, 219),   # blue
-    (46, 204, 113),   # green
-    (231, 76, 60),    # red
-    (155, 89, 182),   # purple
-]
-_VF_FRACTIONS = [0.25, 0.45, 0.65, 0.85]
-_VF_HISTORY_LEN = 500
 _DROPLET_METRIC_INTERVAL = 50
 
 
@@ -186,26 +177,6 @@ class ExperimentView(QWidget):
         self._relayout_grid()
         layout.addWidget(self._plots_container, stretch=1)
 
-        # ── VF cross-section rolling plot ────────────────────────────────
-        self._vf_plot = pg.PlotWidget()
-        self._vf_plot.setBackground(ui.Theme.BG_DARK)
-        self._vf_plot.setFixedHeight(100)
-        self._vf_plot.setLabel("left", "VF")
-        self._vf_plot.setLabel("bottom", "tick")
-        self._vf_plot.setYRange(0.0, 1.0)
-        self._vf_plot.addLegend(offset=(60, 10))
-        self._vf_curves: list[pg.PlotDataItem] = []
-        self._vf_deques: list[deque] = []
-        for i, frac in enumerate(_VF_FRACTIONS):
-            color = _VF_COLORS[i]
-            curve = self._vf_plot.plot(
-                pen=pg.mkPen(color=color, width=2),
-                name=f"{int(frac * 100)}%",
-            )
-            self._vf_curves.append(curve)
-            self._vf_deques.append(deque(maxlen=_VF_HISTORY_LEN))
-        layout.addWidget(self._vf_plot)
-
         # ── Droplet metrics label ────────────────────────────────────────
         self._metrics_label = QLabel("Droplets: --")
         mono = QFont()
@@ -235,7 +206,6 @@ class ExperimentView(QWidget):
         self._t0 = time.perf_counter()
         self._inject_mode = True
         self._first_frame = True
-        self._vf_masks: list[np.ndarray] | None = None
         self._prev_centroids: dict[int, tuple[float, float]] | None = None
 
     # ── Public API ───────────────────────────────────────────────────────
@@ -331,12 +301,7 @@ class ExperimentView(QWidget):
         self._step = 0
         self._tick = 0
         self._first_frame = True
-        self._vf_masks = None
         self._prev_centroids = None
-        for d in self._vf_deques:
-            d.clear()
-        for c in self._vf_curves:
-            c.setData([], [])
         for f in self._fields:
             f.clear_geometry()
         self._metrics_label.setText("Droplets: --")
@@ -380,7 +345,6 @@ class ExperimentView(QWidget):
                 index_map=geom.sparse.index_map,
             )
 
-        self._setup_vf_masks(geom, settings)
         self._update_display()
         return True
 
@@ -408,9 +372,6 @@ class ExperimentView(QWidget):
         self._tick += 1
 
         self._update_display()
-
-        # VF cross-section probes
-        self._update_vf_probes()
 
         # Droplet metrics (every N steps)
         if self._step % _DROPLET_METRIC_INTERVAL < self._settings().steps_per_tick:
@@ -458,85 +419,6 @@ class ExperimentView(QWidget):
                 if field.isVisible():
                     field.auto_range()
             self._first_frame = False
-
-    # ── VF cross-section probes ──────────────────────────────────────────
-
-    def _setup_vf_masks(self, geom: Geometry2D, settings: ExperimentSettings):
-        points = self._corridor_points(settings)
-        if points is None or len(points) < 2:
-            self._vf_masks = None
-            return
-
-        path_lengths = [0.0]
-        for i in range(1, len(points)):
-            dx = points[i][0] - points[i - 1][0]
-            dy = points[i][1] - points[i - 1][1]
-            path_lengths.append(path_lengths[-1] + np.hypot(dx, dy))
-        total = path_lengths[-1]
-        if total < 1e-6:
-            self._vf_masks = None
-            return
-
-        fy = geom.sparse.fluid_yx[:, 0]
-        fx = geom.sparse.fluid_yx[:, 1]
-        ox, oy = geom.origin_um
-        px = ox + (fx + 0.5) * geom.dx_um
-        py = oy + (fy + 0.5) * geom.dx_um
-
-        masks = []
-        for frac in _VF_FRACTIONS:
-            target = frac * total
-            seg = 0
-            for j in range(1, len(path_lengths)):
-                if path_lengths[j] >= target:
-                    seg = j - 1
-                    break
-            x0, y0 = points[seg]
-            x1, y1 = points[seg + 1]
-            seg_len = path_lengths[seg + 1] - path_lengths[seg]
-            if seg_len < 1e-6:
-                t = 0.5
-            else:
-                t = (target - path_lengths[seg]) / seg_len
-            cx = x0 + t * (x1 - x0)
-            cy = y0 + t * (y1 - y0)
-
-            if abs(x1 - x0) >= abs(y1 - y0):
-                mask = np.abs(px - cx) < geom.dx_um
-            else:
-                mask = np.abs(py - cy) < geom.dx_um
-            masks.append(mask)
-        self._vf_masks = masks
-
-    def _corridor_points(self, settings: ExperimentSettings):
-        if settings.kind.startswith("Straight"):
-            size_um = (620.0, max(160.0, settings.corridor_width_um * 3.0))
-            y = size_um[1] * 0.5
-            return [(50.0, y), (size_um[0] - 50.0, y)]
-        elif settings.kind.startswith("L-turn"):
-            return [(55.0, 95.0), (315.0, 95.0), (315.0, 365.0)]
-        else:
-            return [
-                (70.0, 70.0), (70.0, 210.0), (145.0, 210.0),
-                (145.0, 140.0), (220.0, 140.0), (220.0, 210.0),
-                (295.0, 210.0), (295.0, 140.0), (370.0, 140.0),
-                (370.0, 210.0), (445.0, 210.0), (445.0, 140.0),
-                (520.0, 140.0), (520.0, 210.0), (595.0, 210.0),
-                (595.0, 140.0), (670.0, 140.0), (670.0, 210.0),
-                (745.0, 210.0), (745.0, 140.0), (850.0, 140.0),
-            ]
-
-    def _update_vf_probes(self):
-        if self._vf_masks is None or self._state is None:
-            return
-        phi_np = np.asarray(self._state[1])
-        for i, mask in enumerate(self._vf_masks):
-            if mask.sum() == 0:
-                continue
-            vf = float(1.0 - phi_np[mask].mean())
-            self._vf_deques[i].append(vf)
-            xs = list(range(len(self._vf_deques[i])))
-            self._vf_curves[i].setData(xs, list(self._vf_deques[i]))
 
     # ── Droplet metrics ──────────────────────────────────────────────────
 

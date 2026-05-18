@@ -67,7 +67,7 @@ class PhysParams:
     rho_c: float        # continuous phase density, kg/m³
     rho_d: float        # disperse phase density, kg/m³
     sigma: float        # interfacial tension, N/m
-    contact_angle_deg: float = 150.0
+    contact_angle_deg: float = 180.0
     # Surfactant (all None = disabled)
     D_s: float | None = None        # interfacial diffusivity, m²/s
     D_bulk: float | None = None     # bulk diffusivity, m²/s
@@ -82,6 +82,7 @@ class PhysParams:
     lambda_p: float | None = None   # polymer relaxation time, s
     mu_p: float | None = None       # polymer viscosity contribution, Pa·s
     kappa_ve: float | None = None   # artificial diffusion for A_ij stability
+    disjoining_strength: float = 0.0  # anti-coalescence ε (dimensionless LU)
 
 
 @dataclass
@@ -115,6 +116,7 @@ class LBMUnits:
     tau_d_solvent: float = 0.0   # τ_d using solvent-only viscosity
     viscoelastic_enabled: bool = False
     pressure_scale: float = 1.0  # 1.0 = requested pressure maps directly to LU
+    disjoining_strength: float = 0.0
 
 
 def convert_units(
@@ -226,6 +228,7 @@ def convert_units(
         kappa_ve_lu=kappa_ve_lu,
         tau_d_solvent=tau_d_solvent,
         viscoelastic_enabled=ve_enabled,
+        disjoining_strength=phys.disjoining_strength,
     )
 
 
@@ -446,6 +449,18 @@ def _surface_tension_force(phi, mu, nbr8, nbr8_solid, phi_wall=1.0):
     """Surface tension body force F = μ ∇φ."""
     dphidx, dphidy = _grad(phi, nbr8, nbr8_solid, wall_value=phi_wall)
     return mu * dphidx, mu * dphidy
+
+
+def _disjoining_force(phi, epsilon, nbr8, nbr8_solid, phi_wall=1.0):
+    """Disjoining pressure: F = -ε·∇(|∇φ|²).
+
+    Penalises overlapping interfaces, preventing droplet coalescence.
+    Ref: Folch et al. (1999), Phys. Rev. E 60:1724.
+    """
+    dphidx, dphidy = _grad(phi, nbr8, nbr8_solid, wall_value=phi_wall)
+    grad_sq = dphidx**2 + dphidy**2
+    dgdx, dgdy = _grad(grad_sq, nbr8, nbr8_solid, wall_value=0.0)
+    return -epsilon * dgdx, -epsilon * dgdy
 
 
 # ── Surfactant transport + Marangoni ───────────────────────────────────────
@@ -910,6 +925,14 @@ class TwoPhaseSim:
                                                self.nbr8, self.nbr8_solid)
             fx = fx + fx_p
             fy = fy + fy_p
+
+        # 8. Disjoining pressure (anti-coalescence)
+        if u.disjoining_strength > 0.0:
+            fx_d, fy_d = _disjoining_force(phi, u.disjoining_strength,
+                                           self.nbr8, self.nbr8_solid,
+                                           self.phi_wall_nbr8)
+            fx = fx + fx_d
+            fy = fy + fy_d
 
         # 9. Force-corrected velocity (Guo scheme: u_phys = u_bare + 0.5·F/ρ)
         ux_c = ux + 0.5 * fx / rho

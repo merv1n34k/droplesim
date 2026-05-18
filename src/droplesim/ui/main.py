@@ -430,6 +430,7 @@ class MainWindow(QMainWindow):
             rho_d=p["disperse"]["rho_kg_m3"],
             sigma=p["interface"]["sigma_mNm"] * 1e-3,
             contact_angle_deg=p["interface"]["contact_angle_deg"],
+            disjoining_strength=p["interface"].get("disjoining_strength", 0.0),
             D_s=surf["D_s"] if surf else None,
             D_bulk=surf["D_bulk"] if surf else None,
             psi_inf=surf.get("Gamma_max", surf["psi_inf"]) if surf else None,
